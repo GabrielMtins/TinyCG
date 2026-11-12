@@ -19,6 +19,8 @@
  */
 
 /**
+ * 1. Introduction
+ *
  * TinyCG is an utility library for Computer Graphics. It is written in
  * C89 (ANSI C) without dependencies and distributed under the zlib license.
  *
@@ -27,6 +29,12 @@
  *
  * #define TINYCG_IMPLEMENTATION
  * #include "TinyCG.h"
+ */
+
+/**
+ * TODO
+ * - Add a quicksort/mergesort function.
+ * - Rewrite DumbClipping() and SmartClipping() to not use two lists.
  */
 
 #ifndef TINYCG_H
@@ -99,7 +107,7 @@ void TCG_Transform(const TCG_Data *data, const TCG_Mat4 m);
  * otherwise increaseCapacity() will be called.
  * The output and input points must point to different objects.
  */
-int TCG_DumbClipping(TCG_Data *output, const TCG_Data *input);
+int TCG_DumbClipping(TCG_Data *data);
 
 /**
  * Clips lines or triangles properly by intersecting and splitting them with the
@@ -647,20 +655,24 @@ void TCG_Transform(const TCG_Data *data, const TCG_Mat4 m) {
 	}
 }
 
-int TCG_DumbClipping(TCG_Data *output, const TCG_Data *input) {
-	uint i, n;
-	output->len = 0;
+int TCG_DumbClipping(TCG_Data *data) {
+	uint i = 0, n = data->polygon_type;
 	
-	if(output->capacity < input->len && output->increaseCapacity == TCG_NULL) {
-		return 0;
-	}
-
-	n = input->polygon_type;
-
-	for(i = 0; i < input->len; i += n) {
-		if(TCG_IsPolygonFullyVisible(input, i)) {
-			TCG_PushPolygonToOutput(output, input, i);
+	while(i < data->len) {
+		if(TCG_IsPolygonFullyVisible(data, i)) {
+			i += n;
+			continue;
 		}
+
+		TCG_CopyPointsN(
+				data,
+				i,
+				data,
+				data->len - n,
+				n
+				);
+
+		data->len -= n;
 	}
 
 	return 1;
@@ -673,7 +685,7 @@ void TCG_SmartClipping(TCG_Data *output, const TCG_Data *input) {
 	output->len = 0;
 
 	if(!(n == 2 || n == 3)) {
-		TCG_DumbClipping(output, input);
+		//TCG_DumbClipping(output, input);
 		return;
 	}
 
