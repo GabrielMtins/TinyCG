@@ -44,7 +44,7 @@ typedef float TCG_Vec3[3];
 
 typedef struct TCG_Data {
 	/**
-	 * raw and w are dynamic vectors that are set by the user.
+	 * raw and w are dynamic vectors that are managed by the user.
 	 */
 	float *raw;
 	float *w;
@@ -253,6 +253,9 @@ static void TCG_ClipPoly3(TCG_Data *output, const TCG_Data *input, uint poly_sta
 
 /* Culling */
 static int TCG_IsTriangleFrontFacing(const TCG_Data *data, uint poly_start);
+
+/* Sorting */
+static void TCG_InsertionSort(const TCG_Data *data, uint start, uint end);
 
 static float TCG_Cos(float x) {
 	float n, x2, sign = 1.0f;
@@ -596,6 +599,29 @@ static int TCG_IsTriangleFrontFacing(const TCG_Data *data, uint poly_start) {
 	return area > 0.0f;
 }
 
+static void TCG_InsertionSort(const TCG_Data *data, uint start, uint end) {
+	uint working_index = 0;
+	uint i, n;
+
+	n = data->polygon_type;
+	working_index = data->capacity - n;
+
+	for(i = start + n; i <= end; i += n) {
+		uint j;
+
+		TCG_CopyPointsN(data, working_index, data, i, n);
+		j = i - n;
+
+		while(TCG_ComparePolygonsDepth(data, working_index, j) < 0) {
+			if(j == start) break;
+			TCG_CopyPointsN(data, j + n, data, j, n);
+			j -= n;
+		}
+
+		TCG_CopyPointsN(data, j + n, data, working_index, n);
+	}
+}
+
 TCG_Data TCG_BaseData(TCG_Uint polygon_type, TCG_Uint stride, TCG_Uint position_offset) {
 	TCG_Data data;
 
@@ -759,29 +785,13 @@ int TCG_ComparePolygonsDepth(const TCG_Data *data, TCG_Uint p1, TCG_Uint p2) {
  * Implement better sorting (such as mergesort + insertion sort)
  */
 void TCG_SortByDepth(TCG_Data *data) {
-	uint working_index = 0;
-	uint i, n;
+	uint n = data->polygon_type;
 
 	if(data->len == data->capacity) {
 		data->increaseCapacity(data, 1);
 	}
-
-	n = data->polygon_type;
-	working_index = data->capacity - n;
-
-	for(i = n; i < data->len; i += n) {
-		int j;
-
-		TCG_CopyPointsN(data, working_index, data, i, n);
-		j = i - n;
-
-		while(j >= 0 && TCG_ComparePolygonsDepth(data, working_index, j) < 0) {
-			TCG_CopyPointsN(data, j + n, data, j, n);
-			j -= n;
-		}
-
-		TCG_CopyPointsN(data, j + n, data, working_index, n);
-	}
+	
+	TCG_InsertionSort(data, 0, data->len - n);
 }
 
 #endif /* TINYCG_IMPLEMENTATION */
