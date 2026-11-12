@@ -35,6 +35,8 @@
 #define TINYCG_IMPLEMENTATION
 
 #define TCG_NULL (0)
+#define TCG_BACKFACE 0
+#define TCG_FRONTFACE 1
 
 typedef unsigned int TCG_Uint;
 typedef float TCG_Mat4[16];
@@ -108,6 +110,14 @@ int TCG_DumbClipping(TCG_Data *output, const TCG_Data *input);
 void TCG_SmartClipping(TCG_Data *output, const TCG_Data *input);
 
 /**
+ * Cull front or back faces. Only works with triangles.
+ * flags can be TCG_FRONTFACE or TCG_BACKFACE
+ * This function only be called after the projection was applied
+ * to the vertices and it was scaled to the screen space.
+ */
+void TCG_CullFaces(TCG_Data *data, int flags);
+
+/**
  * Divides every point by its w.
  */
 void TCG_ApplyProjection(const TCG_Data *data);
@@ -123,6 +133,10 @@ float TCG_Radians(float x);
  * Computes a perspective matrix with the given values.
  */
 void TCG_Perspective(TCG_Mat4 m, float fov_y, float ratio, float near, float far);
+
+int TCG_ComparePolygonsDepth(const TCG_Data *data, TCG_Uint p1, TCG_Uint p2);
+
+void TCG_SortByDepth(TCG_Data *data);
 
 #endif /* TINYCG_H */
 
@@ -159,6 +173,10 @@ void TCG_Perspective(TCG_Mat4 m, float fov_y, float ratio, float near, float far
 #define COSF TCG_Cos
 #define SINF TCG_Sin
 #define TANF TCG_Tan
+
+#define ABSF(a) ((a) > 0.0f ? (a) : (-(a)))
+#define MAXF(a, b) ((a) > (b) ? (a) : (b))
+#define MINF(a, b) ((a) < (b) ? (a) : (b))
 
 typedef float TCG_Vec4[4];
 
@@ -232,6 +250,9 @@ static void TCG_MakeTriClipContext(TCG_ClipContext *ctx);
 /* General clipping */
 static void TCG_ClipPoly2(TCG_Data *output, const TCG_Data *input, uint poly_start);
 static void TCG_ClipPoly3(TCG_Data *output, const TCG_Data *input, uint poly_start);
+
+/* Culling */
+static int TCG_IsTriangleFrontFacing(const TCG_Data *data, uint poly_start);
 
 static float TCG_Cos(float x) {
 	float n, x2, sign = 1.0f;
@@ -562,6 +583,19 @@ static void TCG_ClipPoly3(TCG_Data *output, const TCG_Data *input, uint poly_sta
 	TCG_MakeTriClipContext(&ctx);
 }
 
+static int TCG_IsTriangleFrontFacing(const TCG_Data *data, uint poly_start) {
+	vec3r p0, p1, p2;
+	float area;
+
+	p0 = TCG_GetPoint(data, poly_start+0);
+	p1 = TCG_GetPoint(data, poly_start+1);
+	p2 = TCG_GetPoint(data, poly_start+2);
+
+	area = (p1[0] - p0[0]) * (p2[1] - p0[1]) - (p2[0] - p0[0]) * (p1[1] - p0[1]);
+
+	return area > 0.0f;
+}
+
 TCG_Data TCG_BaseData(TCG_Uint polygon_type, TCG_Uint stride, TCG_Uint position_offset) {
 	TCG_Data data;
 
@@ -631,6 +665,28 @@ void TCG_SmartClipping(TCG_Data *output, const TCG_Data *input) {
 	}
 }
 
+void TCG_CullFaces(TCG_Data *data, int flags) {
+	uint i = 0;
+	(void) flags;
+
+	if(data->polygon_type != 3) return;
+
+	while(i < data->len) {
+		if(TCG_IsTriangleFrontFacing(data, i) != flags) {
+			i += 3;
+			continue;
+		}
+
+		TCG_CopyPointsN(
+				data, i,
+				data, data->len - 3,
+				3
+				);
+
+		data->len -= 3;
+	}
+}
+
 void TCG_ApplyProjection(const TCG_Data *data) {
 	uint i;
 
@@ -677,6 +733,55 @@ void TCG_Perspective(TCG_Mat4 m, float fov_y, float ratio, float near, float far
 	m[10] = (far + near) / (near - far);
 	m[11] = -1.0f;
 	m[14] = (2.0f * far * near) / (near - far);
+}
+
+int TCG_ComparePolygonsDepth(const TCG_Data *data, TCG_Uint p1, TCG_Uint p2) {
+	uint i, n = data->polygon_type;
+	float average_p1 = 0.0f, average_p2 = 0.0f;
+
+	for(i = 0; i < n; i++) {
+		average_p1 += -TCG_GetPoint(data, p1 + i)[2];
+		average_p2 += -TCG_GetPoint(data, p2 + i)[2];
+	}
+
+	average_p1 /= n;
+	average_p2 /= n;
+
+	if(average_p1 > average_p2) {
+		return 1;
+	}
+
+	return -1;
+}
+
+/**
+ * TODO
+ * Implement better sorting (such as mergesort + insertion sort)
+ */
+void TCG_SortByDepth(TCG_Data *data) {
+	uint working_index = 0;
+	uint i, n;
+
+	if(data->len == data->capacity) {
+		data->increaseCapacity(data, 1);
+	}
+
+	n = data->polygon_type;
+	working_index = data->capacity - n;
+
+	for(i = n; i < data->len; i += n) {
+		int j;
+
+		TCG_CopyPointsN(data, working_index, data, i, n);
+		j = i - n;
+
+		while(j >= 0 && TCG_ComparePolygonsDepth(data, working_index, j) < 0) {
+			TCG_CopyPointsN(data, j + n, data, j, n);
+			j -= n;
+		}
+
+		TCG_CopyPointsN(data, j + n, data, working_index, n);
+	}
 }
 
 #endif /* TINYCG_IMPLEMENTATION */
