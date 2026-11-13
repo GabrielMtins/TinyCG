@@ -34,7 +34,7 @@
 /**
  * 2. Usage
  *
- * Here's a typical usage of TinyCG:
+ * A typical usage of TinyCG:
  * 
  * typedef struct {
  *     float x, y, z;
@@ -63,8 +63,8 @@
  * 
  * render_to_screen(&data); 
  *
- * The (x, y) coordinates are in screen coordinates and you can render to your
- * screen using your own render functions.
+ * The (x, y) coordinates of each vertex are in screen coordinates and you can
+ * render to your screen using your own render functions.
  */
 
 /**
