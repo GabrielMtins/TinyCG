@@ -34,7 +34,6 @@
 /**
  * TODO
  * - Add a quicksort/mergesort function.
- * - Rewrite DumbClipping() and SmartClipping() to not use two lists.
  */
 
 #ifndef TINYCG_H
@@ -115,7 +114,7 @@ int TCG_DumbClipping(TCG_Data *data);
  * function just calls TCG_DumbClipping instead.
  * The output and input points must point to different objects.
  */
-void TCG_SmartClipping(TCG_Data *output, const TCG_Data *input);
+void TCG_SmartClipping(TCG_Data *data);
 
 /**
  * Cull front or back faces. Only works with triangles.
@@ -235,6 +234,7 @@ static float TCG_Cos(float x);
 static void TCG_CopyFloatN(float *dst, const float *src, uint n);
 static void TCG_CopyPointsN(const TCG_Data *output, uint out_i, const TCG_Data *input, uint in_i, uint n);
 static void TCG_PushPointsToOutput(TCG_Data *output, const TCG_Data *input, uint index, uint n);
+static void TCG_RemovePolygon(TCG_Data *data, uint index);
 
 /* Data manipulation */
 static vec3r TCG_GetPoint(const TCG_Data *data, uint i);
@@ -249,15 +249,18 @@ static int TCG_IsPolygonFullyVisible(const TCG_Data *data, uint poly_start);
 static void TCG_ApplyTransformOnPoint(const TCG_Data *data, uint point_index, const TCG_Mat4 m);
 static TCG_ClipLineRes TCG_ClipLine(const vec4 p1, const vec4 p2, const vec4 normal_plane);
 
-/* Cliping triangles */
-static TCG_ClipContext TCG_CreateClipContext(TCG_Data *output, const TCG_Data *input, uint poly_start);
+/* Clipping triangles */
+static TCG_ClipContext TCG_CreateClipContext(TCG_Data *data, uint poly_start);
 static void TCG_PushToOutputClipContext(TCG_ClipContext *ctx, uint index);
 static void TCG_ClipOnClipContext(TCG_ClipContext *ctx);
 static void TCG_MakeTriClipContext(TCG_ClipContext *ctx);
 
 /* General clipping */
-static void TCG_ClipPoly2(TCG_Data *output, const TCG_Data *input, uint poly_start);
-static void TCG_ClipPoly3(TCG_Data *output, const TCG_Data *input, uint poly_start);
+static uint TCG_ClipPoly2(const TCG_Data *data, uint poly_start);
+static uint TCG_ClipPoly3(TCG_Data *data, uint poly_start);
+
+static void TCG_SmartClipping2(TCG_Data *data);
+static void TCG_SmartClipping3(TCG_Data *data);
 
 /* Culling */
 static int TCG_IsTriangleFrontFacing(const TCG_Data *data, uint poly_start);
@@ -325,6 +328,25 @@ static void TCG_PushPointsToOutput(TCG_Data *output, const TCG_Data *input, uint
 			);
 
 	output->len += n;
+}
+
+static void TCG_RemovePolygon(TCG_Data *data, uint index) {
+	uint n = data->polygon_type;
+
+	if(index + n == data->len) {
+		data->len -= n;
+		return;
+	}
+
+	TCG_CopyPointsN(
+			data,
+			index,
+			data,
+			data->len - n,
+			n
+			);
+
+	data->len -= n;
 }
 
 static vec3r TCG_GetPoint(const TCG_Data *data, uint i) {
@@ -437,18 +459,18 @@ static TCG_ClipLineRes TCG_ClipLine(const vec4 p1, const vec4 p2, const vec4 nor
 	return pair;
 }
 
-static TCG_ClipContext TCG_CreateClipContext(TCG_Data *output, const TCG_Data *input, uint poly_start) {
+static TCG_ClipContext TCG_CreateClipContext(TCG_Data *data, uint poly_start) {
 	TCG_ClipContext ctx;
 	uint stack_size = 40;
 	uint sp;
 
-	if(output->capacity - output->len < stack_size) {
-		output->increaseCapacity(output, stack_size);
+	if(data->capacity - data->len < stack_size) {
+		data->increaseCapacity(data, stack_size);
 	}
 
-	sp = output->capacity;
+	sp = data->capacity;
 
-	ctx.data = output;
+	ctx.data = data;
 
 	ctx.working_index = --sp;
 
@@ -461,9 +483,9 @@ static TCG_ClipContext TCG_CreateClipContext(TCG_Data *output, const TCG_Data *i
 	ctx.output_list.start = sp;
 
 	TCG_CopyPointsN(
-			output,
+			data,
 			ctx.output_list.start,
-			input,
+			data,
 			poly_start,
 			3
 			);
@@ -544,44 +566,40 @@ static void TCG_MakeTriClipContext(TCG_ClipContext *ctx) {
 	}
 }
 
-static void TCG_ClipPoly2(TCG_Data *output, const TCG_Data *input, uint poly_start) {
+static uint TCG_ClipPoly2(const TCG_Data *data, uint poly_start) {
 	vec4 p1, p2;
-	uint i, index_p1, index_p2;
+	uint i;
 	TCG_ClipLineRes res;
 
-	TCG_PushPointsToOutput(output, input, poly_start, 2);
-
-	index_p1 = output->len - 2;
-	index_p2 = output->len - 1;
-
 	for(i = 0; i < 6; i++) {
-		TCG_GetVec4(output, index_p1, p1);
-		TCG_GetVec4(output, index_p2, p2);
+		TCG_GetVec4(data, poly_start, p1);
+		TCG_GetVec4(data, poly_start + 1, p2);
 
 		res = TCG_ClipLine(p1, p2, frustum_planes[i]);
 
 		if(res.return_state == TCG_CLIPRES_OUTSIDE) {
-			output->len -= 2;
-			return;
+			return 0;
 		} else if(res.return_state == TCG_CLIPRES_NOCUT) {
 			continue;
 		}
 
 		TCG_LerpPoints(
-				output,
-				index_p1 + res.return_state,
-				index_p1,
-				index_p2,
+				data,
+				poly_start + res.return_state,
+				poly_start,
+				poly_start + 1,
 				res.interpolation
 				);
 	}
+
+	return 2;
 }
 
-static void TCG_ClipPoly3(TCG_Data *output, const TCG_Data *input, uint poly_start) {
+static uint TCG_ClipPoly3(TCG_Data *data, uint poly_start) {
 	TCG_ClipContext ctx;
 	uint i;
 
-	ctx = TCG_CreateClipContext(output, input, poly_start);
+	ctx = TCG_CreateClipContext(data, poly_start);
 
 	for(i = 0; i < 6; i++) {
 		vec4_copy(ctx.normal, frustum_planes[i]);
@@ -589,9 +607,50 @@ static void TCG_ClipPoly3(TCG_Data *output, const TCG_Data *input, uint poly_sta
 		ctx.output_list.len = 0;
 
 		TCG_ClipOnClipContext(&ctx);
+
+		if(ctx.output_list.len == 0) return 0;
 	}
 
 	TCG_MakeTriClipContext(&ctx);
+
+	return (ctx.output_list.len - 2) * 3;
+}
+
+static void TCG_SmartClipping2(TCG_Data *data) {
+	uint i = 0, n = data->polygon_type;
+
+	while(i < data->len) {
+		uint added;
+
+		added = TCG_ClipPoly2(data, i);
+
+		if(added > 0) {
+			i += n;
+			continue;
+		}
+
+		TCG_RemovePolygon(data, i);
+	}
+}
+
+static void TCG_SmartClipping3(TCG_Data *data) {
+	uint i = 0, n = data->polygon_type, clipped = 0;
+
+	while(i < data->len - clipped) {
+		if(TCG_IsPolygonFullyVisible(data, i)) {
+			i += n;
+			continue;
+		}
+
+		clipped += TCG_ClipPoly3(data, i);
+
+		TCG_RemovePolygon(data, i);
+
+		if(clipped > 0) {
+			clipped -= n;
+			i += n;
+		}
+	}
 }
 
 static int TCG_IsTriangleFrontFacing(const TCG_Data *data, uint poly_start) {
@@ -664,42 +723,25 @@ int TCG_DumbClipping(TCG_Data *data) {
 			continue;
 		}
 
-		TCG_CopyPointsN(
-				data,
-				i,
-				data,
-				data->len - n,
-				n
-				);
-
-		data->len -= n;
+		TCG_RemovePolygon(data, i);
 	}
 
 	return 1;
 }
 
-void TCG_SmartClipping(TCG_Data *output, const TCG_Data *input) {
-	uint i, n;
+void TCG_SmartClipping(TCG_Data *data) {
+	switch(data->polygon_type) {
+		default:
+			TCG_DumbClipping(data);
+			break;
 
-	n = input->polygon_type;
-	output->len = 0;
+		case 2:
+			TCG_SmartClipping2(data);
+			break;
 
-	if(!(n == 2 || n == 3)) {
-		//TCG_DumbClipping(output, input);
-		return;
-	}
-
-	for(i = 0; i < input->len; i += n) {
-		if(TCG_IsPolygonFullyVisible(input, i)) {
-			TCG_PushPolygonToOutput(output, input, i);
-			continue;
-		}
-
-		if(input->polygon_type == 2) {
-			TCG_ClipPoly2(output, input, i);
-		} else {
-			TCG_ClipPoly3(output, input, i);
-		}
+		case 3:
+			TCG_SmartClipping3(data);
+			break;
 	}
 }
 
@@ -715,13 +757,7 @@ void TCG_CullFaces(TCG_Data *data, int flags) {
 			continue;
 		}
 
-		TCG_CopyPointsN(
-				data, i,
-				data, data->len - 3,
-				3
-				);
-
-		data->len -= 3;
+		TCG_RemovePolygon(data, i);
 	}
 }
 
@@ -794,6 +830,8 @@ int TCG_ComparePolygonsDepth(const TCG_Data *data, TCG_Uint p1, TCG_Uint p2) {
 
 void TCG_SortByDepth(TCG_Data *data) {
 	uint n = data->polygon_type;
+
+	if(data->len == 0) return;
 
 	if(data->len == data->capacity) {
 		data->increaseCapacity(data, 1);
