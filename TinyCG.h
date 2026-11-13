@@ -76,7 +76,9 @@
 #ifndef TINYCG_H
 #define TINYCG_H
 
-#define TINYCG_IMPLEMENTATION
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 #define TCG_NULL (0)
 #define TCG_BACKFACE 0
@@ -207,6 +209,10 @@ int TCG_ComparePolygonsDepth(const TCG_Data *data, TCG_Uint p1, TCG_Uint p2);
  * It works with any type of polygon.
  */
 void TCG_SortByDepth(TCG_Data *data);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* TINYCG_H */
 
