@@ -65,7 +65,7 @@ typedef struct TCG_Data {
 	int (*increaseCapacity)(struct TCG_Data *, TCG_Uint);
 
 	/**
-	 * For line polygon_type = 2, for triangle polygon_type = 3 etc
+	 * For line polygon_type = 2, for triangle polygon_type = 3 etc.
 	 */
 	TCG_Uint polygon_type;
 
@@ -86,6 +86,10 @@ typedef struct TCG_Data {
 	 * stride = 5 // the type has five floats
 	 * */
 	TCG_Uint position_offset;
+
+	/**
+	 * The number of floats that your data type has.
+	 */
 	TCG_Uint stride;
 
 	TCG_Uint len;
@@ -101,25 +105,32 @@ TCG_Data TCG_BaseData(TCG_Uint polygon_type, TCG_Uint stride, TCG_Uint position_
 void TCG_Transform(const TCG_Data *data, const TCG_Mat4 m);
 
 /**
+ * Transforms the data by using the given matrix in a given interval. The matrix
+ * must be in the column-major format.
+ */
+void TCG_TransformPart(const TCG_Data *data, const TCG_Mat4 m, TCG_Uint start_point, TCG_Uint len);
+
+/**
+ * Resets homogenous coordinates w to 1.0f.
+ */
+void TCG_ResetW(const TCG_Data *data);
+
+/**
  * Clips a polygon if it contains at least a point outside the view frustum.
- * It is recommended for the output capacity to be >= the input length,
- * otherwise increaseCapacity() will be called.
- * The output and input points must point to different objects.
  */
 int TCG_DumbClipping(TCG_Data *data);
 
 /**
  * Clips lines or triangles properly by intersecting and splitting them with the
- * view frustum planes. For other types of polygons (polygon_type > 3), this
+ * view frustum planes. For other types of polygons, the
  * function just calls TCG_DumbClipping instead.
- * The output and input points must point to different objects.
  */
 void TCG_SmartClipping(TCG_Data *data);
 
 /**
  * Cull front or back faces. Only works with triangles.
  * flags can be TCG_FRONTFACE or TCG_BACKFACE
- * This function only be called after the projection was applied
+ * This function can be called only after the projection was applied
  * to the vertices and it was scaled to the screen space.
  */
 void TCG_CullFaces(TCG_Data *data, int flags);
@@ -131,6 +142,8 @@ void TCG_ApplyProjection(const TCG_Data *data);
 
 /**
  * Transforms the normalized space to screen space.
+ * The convention is that (0, 0) is on the top left of the screen, so
+ * it inverts the Y-axis.
  */
 void TCG_ScaleToScreenSize(const TCG_Data *data, TCG_Uint w, TCG_Uint h);
 
@@ -143,6 +156,11 @@ void TCG_Perspective(TCG_Mat4 m, float fov_y, float ratio, float near, float far
 
 int TCG_ComparePolygonsDepth(const TCG_Data *data, TCG_Uint p1, TCG_Uint p2);
 
+/**
+ * Sorts polygon by depth (farthest to closest).
+ * Intended for be used when rendering with painter's algorithm.
+ * It works with any type of polygon.
+ */
 void TCG_SortByDepth(TCG_Data *data);
 
 #endif /* TINYCG_H */
@@ -663,7 +681,7 @@ static int TCG_IsTriangleFrontFacing(const TCG_Data *data, uint poly_start) {
 
 	area = (p1[0] - p0[0]) * (p2[1] - p0[1]) - (p2[0] - p0[0]) * (p1[1] - p0[1]);
 
-	return area > 0.0f;
+	return area < 0.0f;
 }
 
 static void TCG_InsertionSort(const TCG_Data *data, uint start, uint end) {
@@ -674,13 +692,12 @@ static void TCG_InsertionSort(const TCG_Data *data, uint start, uint end) {
 	working_index = data->capacity - n;
 
 	for(i = start + n; i <= end; i += n) {
-		uint j;
+		int j;
 
 		TCG_CopyPointsN(data, working_index, data, i, n);
-		j = i - n;
+		j = (int) i - (int) n;
 
-		while(TCG_ComparePolygonsDepth(data, working_index, j) < 0) {
-			if(j == start) break;
+		while((j >= 0) && TCG_ComparePolygonsDepth(data, working_index, j) < 0) {
 			TCG_CopyPointsN(data, j + n, data, j, n);
 			j -= n;
 		}
@@ -706,12 +723,24 @@ TCG_Data TCG_BaseData(TCG_Uint polygon_type, TCG_Uint stride, TCG_Uint position_
 	return data;
 }
 
-void TCG_Transform(const TCG_Data *data, const TCG_Mat4 m) {
+void TCG_TransformPart(const TCG_Data *data, const TCG_Mat4 m, TCG_Uint start_point, TCG_Uint len) {
+	uint i;
+
+	for(i = 0; i < len; i++) {
+		TCG_ApplyTransformOnPoint(data, start_point + i, m);
+	}
+}
+
+void TCG_ResetW(const TCG_Data *data) {
 	uint i;
 
 	for(i = 0; i < data->len; i++) {
-		TCG_ApplyTransformOnPoint(data, i, m);
+		data->w[i] = 1.0f;
 	}
+}
+
+void TCG_Transform(const TCG_Data *data, const TCG_Mat4 m) {
+	TCG_TransformPart(data, m, 0, data->len);
 }
 
 int TCG_DumbClipping(TCG_Data *data) {
@@ -768,6 +797,8 @@ void TCG_ApplyProjection(const TCG_Data *data) {
 		vec3r p = TCG_GetPoint(data, i);
 		float w = data->w[i];
 
+		if(w == 0.0f) w = 1e-6f;
+
 		p[0] /= w;
 		p[1] /= w;
 		p[2] /= w;
@@ -784,6 +815,7 @@ void TCG_ScaleToScreenSize(const TCG_Data *data, TCG_Uint w, TCG_Uint h) {
 		p[0] += w;
 		p[0] /= 2;
 
+		p[1] *= -1.0f;
 		p[1] *= h;
 		p[1] += h;
 		p[1] /= 2;
@@ -831,10 +863,10 @@ int TCG_ComparePolygonsDepth(const TCG_Data *data, TCG_Uint p1, TCG_Uint p2) {
 void TCG_SortByDepth(TCG_Data *data) {
 	uint n = data->polygon_type;
 
-	if(data->len == 0) return;
+	if(data->len < n) return;
 
 	if(data->len == data->capacity) {
-		data->increaseCapacity(data, 1);
+		data->increaseCapacity(data, n);
 	}
 	
 	TCG_InsertionSort(data, 0, data->len - n);
