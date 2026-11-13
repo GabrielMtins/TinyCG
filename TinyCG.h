@@ -71,6 +71,7 @@
  * TODO
  * - Add a quicksort function.
  * - Add a rasterization function.
+ * - Handling failing to increase capacity.
  */
 
 #ifndef TINYCG_H
@@ -144,6 +145,8 @@ typedef struct TCG_Data {
 /* ==== PUBLIC API DECLARATION BEGIN ==== */
 
 TCG_Data TCG_BaseData(TCG_Uint polygon_type, TCG_Uint stride, TCG_Uint position_offset);
+
+void TCG_AppendData(TCG_Data *data, const void *p, TCG_Uint num_points);
 
 /**
  * Transforms the data by using the given matrix. The matrix must be in the
@@ -222,8 +225,6 @@ void TCG_SortByDepth(TCG_Data *data);
 #define vec4_copy(res, a) do{res[0]=a[0];res[1]=a[1];res[2]=a[2];res[3]=a[3];} while(0)
 #define vec4_dot(a, b) (a[0]*b[0]+a[1]*b[1]+a[2]*b[2]+a[3]*b[3])
 #define vec4_sub(res, a, b) do{res[0]=a[0]-b[0];res[1]=a[1]-b[1];res[2]=a[2]-b[2];res[3]=a[3]-b[3];} while(0)
-
-#define TCG_PushPolygonToOutput(dst, src, i) TCG_PushPointsToOutput(dst, src, i, (dst)->polygon_type)
 
 #define TCG_Swap(type, a, b) \
 	do { \
@@ -774,6 +775,20 @@ TCG_Data TCG_BaseData(TCG_Uint polygon_type, TCG_Uint stride, TCG_Uint position_
 	data.polygon_type = polygon_type;
 
 	return data;
+}
+
+void TCG_AppendData(TCG_Data *data, const void *p, TCG_Uint num_points) {
+	if(data->len + num_points > data->capacity) {
+		data->increaseCapacity(data, data->capacity - (data->len + num_points));
+	}
+
+	TCG_CopyFloatN(
+			data->raw + data->len * data->stride,
+			(const float *) p,
+			num_points * data->stride
+			);
+
+	data->len += num_points;
 }
 
 void TCG_TransformPart(const TCG_Data *data, const TCG_Mat4 m, TCG_Uint start_point, TCG_Uint len) {
