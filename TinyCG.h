@@ -32,8 +32,45 @@
  */
 
 /**
+ * 2. Usage
+ *
+ * Here's a typical usage of TinyCG:
+ * 
+ * typedef struct {
+ *     float x, y, z;
+ *     float r, g, b;
+ *     float u, v;
+ * } Vertex;
+ *
+ * TCG_Data data = TCG_BaseData(TCG_TRIANGLE, sizeof(Vertex) / sizeof(float), 0);
+ * TCG_Mat4 projection;
+ *
+ * TCG_Perspective(projection, TCG_Radians(45.0f), 1.77f, 0.1f, 10.0f);
+ *
+ * copy_vertex_buffer_to(data.raw);
+ * data.w = create_float_buffer();
+ * data.len = // setup len
+ * data.capacity = // setup capacity
+ *
+ * TCG_ResetW(&data);
+ *
+ * TCG_Transform(&data, projection);
+ * TCG_SmartClipping(&data);
+ * TCG_ApplyProjection(&data);
+ * TCG_ScaleToScreenSize(&data, 1280, 720);
+ * TCG_CullFaces(&data, TCG_BACKFACE);
+ * TCG_SortByDepth(&data);
+ * 
+ * render_to_screen(&data); 
+ *
+ * The (x, y) coordinates are in screen coordinates and you can render to your
+ * screen using your own render functions.
+ */
+
+/**
  * TODO
- * - Add a quicksort/mergesort function.
+ * - Add a quicksort function.
+ * - Add a rasterization function.
  */
 
 #ifndef TINYCG_H
@@ -44,6 +81,9 @@
 #define TCG_NULL (0)
 #define TCG_BACKFACE 0
 #define TCG_FRONTFACE 1
+
+#define TCG_TRIANGLE 3
+#define TCG_LINE 2
 
 typedef unsigned int TCG_Uint;
 typedef float TCG_Mat4[16];
@@ -57,12 +97,15 @@ typedef struct TCG_Data {
 	float *w;
 
 	void *userdata;
+
 	/**
-	 * If capacity > len, a function can call increaseCapacity() be able to
-	 * handle more data. The first argument is the struct that called the
-	 * function and the second argument is the 
-	 */
+    * If capacity > len, a function can call increaseCapacity() to be able
+    * to handle more data. The first argument is the struct that called the
+    * function and the second argument is the expected capacity increase.
+    */
 	int (*increaseCapacity)(struct TCG_Data *, TCG_Uint);
+
+	void (*putPixel)(void *, const void *);
 
 	/**
 	 * For line polygon_type = 2, for triangle polygon_type = 3 etc.
@@ -95,6 +138,8 @@ typedef struct TCG_Data {
 	TCG_Uint len;
 	TCG_Uint capacity;
 } TCG_Data;
+
+/* ==== PUBLIC API DECLARATION BEGIN ==== */
 
 TCG_Data TCG_BaseData(TCG_Uint polygon_type, TCG_Uint stride, TCG_Uint position_offset);
 
@@ -215,7 +260,6 @@ typedef TCG_Vec4 vec4;
 
 typedef struct TCG_ClipLineRes {
 	int return_state;
-	int change_index;
 	float interpolation;
 } TCG_ClipLineRes;
 
@@ -242,6 +286,8 @@ static const vec4 frustum_planes[6] = {
 	{0.0f, -1.0f, 0.0f, 1.0f},
 	{0.0f, 0.0f, -1.0f, 1.0f},
 };
+
+/* ==== PRIVATE FUNCTIONS DECLARATION BEGIN ==== */
 
 /* Math functions */
 static float TCG_Cos(float x);
@@ -713,6 +759,7 @@ TCG_Data TCG_BaseData(TCG_Uint polygon_type, TCG_Uint stride, TCG_Uint position_
 	data.w = TCG_NULL;
 	data.userdata = TCG_NULL;
 	data.increaseCapacity = TCG_NULL;
+	data.putPixel = TCG_NULL;
 
 	data.len = 0;
 	data.capacity = 0;
