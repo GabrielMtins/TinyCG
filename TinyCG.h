@@ -792,10 +792,6 @@ int TCG_ComparePolygonsDepth(const TCG_Data *data, TCG_Uint p1, TCG_Uint p2) {
 	return -1;
 }
 
-/**
- * TODO
- * Implement better sorting (such as mergesort + insertion sort)
- */
 void TCG_SortByDepth(TCG_Data *data) {
 	uint n = data->polygon_type;
 
