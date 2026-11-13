@@ -104,7 +104,7 @@ typedef struct TCG_Data {
 	/**
     * If capacity > len, a function can call increaseCapacity() to be able
     * to handle more data. The first argument is the struct that called the
-    * function and the second argument is the expected capacity increase.
+    * function and the second argument is the new expected capacity.
     */
 	int (*increaseCapacity)(struct TCG_Data *, TCG_Uint);
 
@@ -340,7 +340,8 @@ static int TCG_IsTriangleFrontFacing(const TCG_Data *data, uint poly_start);
 static void TCG_InsertionSort(const TCG_Data *data, uint start, uint end);
 
 static float TCG_Cos(float x) {
-	float n, x2, sign = 1.0f;
+	float x2, sign = 1.0f;
+	int n;
 
 	if(x < 0.0f) x = -x;
 
@@ -386,8 +387,8 @@ static void TCG_CopyPointsN(const TCG_Data *output, uint out_i, const TCG_Data *
 }
 
 static void TCG_PushPointsToOutput(TCG_Data *output, const TCG_Data *input, uint index, uint n) {
-	if(output->capacity - output->len < n) {
-		output->increaseCapacity(output, n);
+	if(output->len + n > output->capacity) {
+		output->increaseCapacity(output, output->len + n);
 	}
 
 	TCG_CopyPointsN(
@@ -535,8 +536,8 @@ static TCG_ClipContext TCG_CreateClipContext(TCG_Data *data, uint poly_start) {
 	uint stack_size = 40;
 	uint sp;
 
-	if(data->capacity - data->len < stack_size) {
-		data->increaseCapacity(data, stack_size);
+	if(data->len + stack_size > data->capacity) {
+		data->increaseCapacity(data, data->len + stack_size);
 	}
 
 	sp = data->capacity;
@@ -778,8 +779,10 @@ TCG_Data TCG_BaseData(TCG_Uint polygon_type, TCG_Uint stride, TCG_Uint position_
 }
 
 void TCG_AppendData(TCG_Data *data, const void *p, TCG_Uint num_points) {
+	uint i;
+
 	if(data->len + num_points > data->capacity) {
-		data->increaseCapacity(data, data->capacity - (data->len + num_points));
+		data->increaseCapacity(data, data->len + num_points);
 	}
 
 	TCG_CopyFloatN(
@@ -787,6 +790,10 @@ void TCG_AppendData(TCG_Data *data, const void *p, TCG_Uint num_points) {
 			(const float *) p,
 			num_points * data->stride
 			);
+
+	for(i = 0; i < num_points; i++) {
+		data->w[data->len + i] = 1.0f;
+	}
 
 	data->len += num_points;
 }
@@ -844,7 +851,6 @@ void TCG_SmartClipping(TCG_Data *data) {
 
 void TCG_CullFaces(TCG_Data *data, int flags) {
 	uint i = 0;
-	(void) flags;
 
 	if(data->polygon_type != 3) return;
 
@@ -933,8 +939,8 @@ void TCG_SortByDepth(TCG_Data *data) {
 
 	if(data->len < n) return;
 
-	if(data->len == data->capacity) {
-		data->increaseCapacity(data, n);
+	if(data->len + n > data->capacity) {
+		data->increaseCapacity(data, data->len + n);
 	}
 	
 	TCG_InsertionSort(data, 0, data->len - n);
