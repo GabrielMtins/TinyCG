@@ -116,7 +116,17 @@ typedef struct TCG_Data {
 
 /* ==== VERTEX MANIPULATION ==== */
 
+/**
+ * Creates a base data type with the following arguments, and settings others
+ * to NULL or zero.
+ */
 TCG_Data TCG_BaseData(TCG_Uint polygon_type, TCG_Uint stride, TCG_Uint position_offset);
+
+/**
+ * This function can be used only if TINYCG_USE_STDLIB is defined. It frees the
+ * memory allocated by the default allocator.
+ */
+void TCG_FreeData(TCG_Data *data);
 
 /**
  * Copies num_points in p to the end of the data, increasing the capacity
@@ -960,6 +970,19 @@ TCG_Data TCG_BaseData(TCG_Uint polygon_type, TCG_Uint stride, TCG_Uint position_
 
 	return data;
 }
+
+#ifdef TINYCG_USE_STDLIB
+void TCG_FreeData(TCG_Data *data) {
+	free(data->raw);
+	free(data->w);
+
+	data->raw = TCG_NULL;
+	data->w = TCG_NULL;
+
+	data->len = 0;
+	data->capacity = 0;
+}
+#endif
 
 int TCG_AppendData(TCG_Data *data, const void *p, TCG_Uint num_points) {
 	uint i;
