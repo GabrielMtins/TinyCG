@@ -146,6 +146,10 @@ typedef struct TCG_Data {
 
 TCG_Data TCG_BaseData(TCG_Uint polygon_type, TCG_Uint stride, TCG_Uint position_offset);
 
+/**
+ * Copies the num points in p to the end of the data, increasing the capacity
+ * if necessary. It also sets the w value of the news points as 1.0f.
+ */
 void TCG_AppendData(TCG_Data *data, const void *p, TCG_Uint num_points);
 
 /**
@@ -186,7 +190,7 @@ void TCG_SmartClipping(TCG_Data *data);
 void TCG_CullFaces(TCG_Data *data, int flags);
 
 /**
- * Divides every point by its w.
+ * Divides every position by w.
  */
 void TCG_ApplyProjection(const TCG_Data *data);
 
@@ -207,7 +211,7 @@ void TCG_Perspective(TCG_Mat4 m, float fov_y, float ratio, float near, float far
 int TCG_ComparePolygonsDepth(const TCG_Data *data, TCG_Uint p1, TCG_Uint p2);
 
 /**
- * Sorts polygon by depth (farthest to closest).
+ * Sorts polygon by depth (closest to farthest).
  * Intended for be used when rendering with painter's algorithm.
  * It works with any type of polygon.
  */
