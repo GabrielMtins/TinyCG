@@ -69,13 +69,15 @@
 
 /**
  * TODO
- * - Add a quicksort function.
+ * - Rewrite quicksort to use unsigned integers.
  * - Add a rasterization function.
  * - Handling failing to increase capacity.
  */
 
 #ifndef TINYCG_H
 #define TINYCG_H
+
+#define TINYCG_IMPLEMENTATION
 
 #ifdef __cplusplus
 extern "C" {
@@ -144,6 +146,8 @@ typedef struct TCG_Data {
 
 /* ==== PUBLIC API DECLARATION BEGIN ==== */
 
+/* ==== VERTEX MANIPULATION ==== */
+
 TCG_Data TCG_BaseData(TCG_Uint polygon_type, TCG_Uint stride, TCG_Uint position_offset);
 
 /**
@@ -201,12 +205,16 @@ void TCG_ApplyProjection(const TCG_Data *data);
  */
 void TCG_ScaleToScreenSize(const TCG_Data *data, TCG_Uint w, TCG_Uint h);
 
+/* ==== MATH AND MATRICES ==== */
+
 float TCG_Radians(float x);
 
 /**
  * Computes a perspective matrix with the given values.
  */
 void TCG_Perspective(TCG_Mat4 m, float fov_y, float ratio, float near, float far);
+
+/* ======== SORTING ======== */
 
 int TCG_ComparePolygonsDepth(const TCG_Data *data, TCG_Uint p1, TCG_Uint p2);
 
@@ -218,6 +226,9 @@ int TCG_ComparePolygonsDepth(const TCG_Data *data, TCG_Uint p1, TCG_Uint p2);
 void TCG_SortByDepth(TCG_Data *data);
 
 int TCG_IsSortedByDepth(const TCG_Data *data);
+
+/* ======= RASTERIZATION ======= */
+/* TODO */
 
 #ifdef __cplusplus
 }
@@ -997,11 +1008,19 @@ void TCG_ScaleToScreenSize(const TCG_Data *data, TCG_Uint w, TCG_Uint h) {
 		p[0] *= w;
 		p[0] += w;
 		p[0] /= 2;
+		p[0] = (int) p[0];
 
 		p[1] *= -1.0f;
 		p[1] *= h;
 		p[1] += h;
 		p[1] /= 2;
+		p[1] = (int) p[1];
+
+		if(p[0] < 0.0f) p[0] = 0.0f;
+		if(p[1] < 0.0f) p[1] = 0.0f;
+
+		if(p[0] >= w - 0.1f) p[0] = w - 1.0f;
+		if(p[1] >= h - 0.1f) p[1] = h - 1.0f;
 	}
 }
 
@@ -1022,6 +1041,14 @@ void TCG_Perspective(TCG_Mat4 m, float fov_y, float ratio, float near, float far
 	m[10] = (far + near) / (near - far);
 	m[11] = -1.0f;
 	m[14] = (2.0f * far * near) / (near - far);
+}
+
+void TCG_Mat4Identity(TCG_Mat4 m) {
+	int i;
+
+	for(i = 0; i < 16; i++) m[i] = 0.0f;
+
+	m[0] = m[5] = m[10] = m[15] = 1.0f;
 }
 
 int TCG_ComparePolygonsDepth(const TCG_Data *data, TCG_Uint p1, TCG_Uint p2) {
