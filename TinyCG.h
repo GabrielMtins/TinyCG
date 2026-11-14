@@ -32,44 +32,7 @@
  */
 
 /**
- * 2. Usage
- *
- * A typical usage of TinyCG:
- * 
- * typedef struct {
- *     float x, y, z;
- *     float r, g, b;
- *     float u, v;
- * } Vertex;
- *
- * TCG_Data data = TCG_BaseData(TCG_TRIANGLE, sizeof(Vertex) / sizeof(float), 0);
- * TCG_Mat4 projection;
- *
- * TCG_Perspective(projection, TCG_Radians(45.0f), 1.77f, 0.1f, 10.0f);
- *
- * copy_vertex_buffer_to(data.raw);
- * data.w = create_float_buffer();
- * data.len = // setup len
- * data.capacity = // setup capacity
- *
- * TCG_ResetW(&data);
- *
- * TCG_Transform(&data, projection);
- * TCG_SmartClipping(&data);
- * TCG_ApplyProjection(&data);
- * TCG_ScaleToScreenSize(&data, 1280, 720);
- * TCG_CullFaces(&data, TCG_BACKFACE);
- * TCG_SortByDepth(&data);
- * 
- * render_to_screen(&data); 
- *
- * The (x, y) coordinates of each vertex are in screen coordinates and you can
- * render to your screen using your own render functions.
- */
-
-/**
  * TODO
- * - Rewrite quicksort to use unsigned integers.
  * - Add a rasterization function.
  * - Handling failing to increase capacity.
  */
@@ -212,7 +175,14 @@ float TCG_Radians(float x);
 /**
  * Computes a perspective matrix with the given values.
  */
-void TCG_Perspective(TCG_Mat4 m, float fov_y, float ratio, float near, float far);
+void TCG_Mat4Perspective(TCG_Mat4 m, float fov_y, float ratio, float near, float far);
+
+void TCG_Mat4Identity(TCG_Mat4 m);
+void TCG_Mat4Translate(TCG_Mat4 m, TCG_Vec3 position);
+void TCG_Mat4Scale(TCG_Mat4 m, TCG_Vec3 scale);
+void TCG_Mat4RotateX(TCG_Mat4 m, float angle);
+void TCG_Mat4RotateY(TCG_Mat4 m, float angle);
+void TCG_Mat4Mul(const TCG_Mat4 a, TCG_Mat4 b);
 
 /* ======== SORTING ======== */
 
@@ -238,6 +208,8 @@ int TCG_IsSortedByDepth(const TCG_Data *data);
 
 #ifdef TINYCG_IMPLEMENTATION 
 
+#define mat4_clean(m) do{ int i; for(i = 0; i < 16; i++) m[i] = 0.0f; } while(0)
+#define mat4_copy(a, b) do{ int i; for(i = 0; i < 16; i++) a[i] = b[i]; } while(0)
 #define vec3_copy(res, a) do{res[0]=a[0];res[1]=a[1];res[2]=a[2];} while(0)
 #define vec4_copy(res, a) do{res[0]=a[0];res[1]=a[1];res[2]=a[2];res[3]=a[3];} while(0)
 #define vec4_dot(a, b) (a[0]*b[0]+a[1]*b[1]+a[2]*b[2]+a[3]*b[3])
@@ -360,7 +332,7 @@ static void TCG_SmartClipping3(TCG_Data *data);
 static int TCG_IsTriangleFrontFacing(const TCG_Data *data, uint poly_start);
 
 /* Sorting */
-static int TCG_PartitionDepth(const TCG_Data *data, uint start, uint end);
+static uint TCG_PartitionDepth(const TCG_Data *data, uint start, uint end);
 static void TCG_QuickSortDepth(const TCG_Data *data);
 static void TCG_InsertionSortDepth(const TCG_Data *data, uint start, uint end);
 
@@ -785,30 +757,32 @@ static int TCG_IsTriangleFrontFacing(const TCG_Data *data, uint poly_start) {
 	return area < 0.0f;
 }
 
-static int TCG_PartitionDepth(const TCG_Data *data, uint start, uint end) {
-	int working_index, i, j, n, pivot_index;
+static uint TCG_PartitionDepth(const TCG_Data *data, uint start, uint end) {
+	uint working_index, i, j, n, pivot_index;
 
 	n = data->polygon_type;
 	working_index = data->capacity - n;
 	pivot_index = end;
 
-	i = start - n;
-	j = end + n;
+	i = start;
+	j = end;
 
 	TCG_CopyPointsN(data, working_index, data, pivot_index, n);
 
-	while(1) {
-		do {
+	while(i < j) {
+		while(TCG_ComparePolygonsDepth(data, i, working_index) < 0) {
 			i += n;
-		} while(TCG_ComparePolygonsDepth(data, i, working_index) < 0);
+		}
 
-		do {
+		while(TCG_ComparePolygonsDepth(data, j, working_index) > 0) {
 			j -= n;
-		} while(TCG_ComparePolygonsDepth(data, j, working_index) > 0);
+		}
 
 		if(i >= j) break;
 
 		TCG_SwapPointsN(data, i, data, j, n);
+
+		if(j > start) j -= n;
 	}
 
 	return j;
@@ -825,15 +799,15 @@ static void TCG_QuickSortDepth(const TCG_Data *data) {
 		TCG_PairInt pair = pairs[--stack_size];
 
 		while(pair.end - pair.start > 17 * n) {
-			int p = TCG_PartitionDepth(data, pair.start, pair.end);
+			uint p = TCG_PartitionDepth(data, pair.start, pair.end);
 			uint left_size, right_size;
 
-			if(p <= (int) pair.start) {
+			if(p <= pair.start) {
 				pair.start += n;
 				continue;
 			}
 
-			if(p >= (int) pair.end) {
+			if(p >= pair.end) {
 				pair.end -= n;
 				continue;
 			}
@@ -1028,11 +1002,10 @@ float TCG_Radians(float x) {
 	return (x / 360.0f) * TAU;
 }
 
-void TCG_Perspective(TCG_Mat4 m, float fov_y, float ratio, float near, float far) {
-	int i;
+void TCG_Mat4Perspective(TCG_Mat4 m, float fov_y, float ratio, float near, float far) {
 	float f;
 
-	for(i = 0; i < 16; i++) m[i] = 0.0f;
+	mat4_clean(m);
 
 	f = 1.0f / TANF(fov_y / 2);
 
@@ -1049,6 +1022,70 @@ void TCG_Mat4Identity(TCG_Mat4 m) {
 	for(i = 0; i < 16; i++) m[i] = 0.0f;
 
 	m[0] = m[5] = m[10] = m[15] = 1.0f;
+}
+
+void TCG_Mat4Translate(TCG_Mat4 m, TCG_Vec3 position) {
+	mat4_clean(m);
+
+	m[0] = m[5] = m[10] = m[15] = 1.0f;
+
+	vec3_copy((m + 12), position);
+}
+
+void TCG_Mat4Scale(TCG_Mat4 m, TCG_Vec3 scale) {
+	mat4_clean(m);
+	m[15] = 1.0f;
+
+	m[0]  = scale[0];
+	m[5]  = scale[1];
+	m[10] = scale[2];
+}
+
+void TCG_Mat4RotateX(TCG_Mat4 m, float angle) {
+	float cos_ang, sin_ang;
+
+	cos_ang = COSF(angle);
+	sin_ang = SINF(angle);
+
+	mat4_clean(m);
+
+	m[0] = 1.0f;
+	m[5] = cos_ang;
+	m[6] = sin_ang;
+	m[9] = -sin_ang;
+	m[10] = cos_ang;
+	m[15] = 1.0f;
+}
+
+void TCG_Mat4RotateY(TCG_Mat4 m, float angle) {
+	float cos_ang, sin_ang;
+
+	cos_ang = COSF(angle);
+	sin_ang = SINF(angle);
+
+	mat4_clean(m);
+
+	m[0] = cos_ang;
+	m[2] = -sin_ang;
+	m[5] = 1.0f;
+	m[8] = sin_ang;
+	m[10] = cos_ang;
+	m[15] = 1.0f;
+}
+
+void TCG_Mat4Mul(const TCG_Mat4 a, TCG_Mat4 b) {
+	int i, j;
+	TCG_Mat4 aux;
+
+	mat4_copy(aux, b);
+
+	for(i = 0; i < 16; i++) {
+		b[i] = 0.0f;
+
+		for(j = 0; j < 4; j++) {
+			b[i] += a[j * 4 + (i % 4)] * aux[j + (i / 4) * 4];
+		}
+	}
 }
 
 int TCG_ComparePolygonsDepth(const TCG_Data *data, TCG_Uint p1, TCG_Uint p2) {
