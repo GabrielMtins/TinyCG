@@ -213,6 +213,8 @@ int TCG_ComparePolygonsDepth(const TCG_Data *data, TCG_Uint p1, TCG_Uint p2);
  */
 void TCG_SortByDepth(TCG_Data *data);
 
+int TCG_IsSortedByDepth(const TCG_Data *data);
+
 #ifdef __cplusplus
 }
 #endif
@@ -285,6 +287,10 @@ typedef struct TCG_ClipContext {
 	uint working_index;
 } TCG_ClipContext;
 
+typedef struct TCG_PairInt {
+	uint start, end;
+} TCG_PairInt;
+
 static const vec4 frustum_planes[6] = {
 	{1.0f, 0.0f, 0.0f, 1.0f},
 	{0.0f, 1.0f, 0.0f, 1.0f},
@@ -339,8 +345,8 @@ static void TCG_SmartClipping3(TCG_Data *data);
 static int TCG_IsTriangleFrontFacing(const TCG_Data *data, uint poly_start);
 
 /* Sorting */
-static uint TCG_PartitionDepth(const TCG_Data *data, uint start, uint end);
-static void TCG_QuickSortDepth(const TCG_Data *data, uint start, uint end);
+static int TCG_PartitionDepth(const TCG_Data *data, uint start, uint end);
+static void TCG_QuickSortDepth(const TCG_Data *data);
 static void TCG_InsertionSortDepth(const TCG_Data *data, uint start, uint end);
 
 static float TCG_Cos(float x) {
@@ -764,56 +770,77 @@ static int TCG_IsTriangleFrontFacing(const TCG_Data *data, uint poly_start) {
 	return area < 0.0f;
 }
 
-static uint TCG_PartitionDepth(const TCG_Data *data, uint start, uint end) {
-	uint working_index, i, j, n, pivot_index;
+static int TCG_PartitionDepth(const TCG_Data *data, uint start, uint end) {
+	int working_index, i, j, n, pivot_index;
 
 	n = data->polygon_type;
 	working_index = data->capacity - n;
-	pivot_index = (start + end) / 2;
+	pivot_index = end;
 
-	i = start;
-	j = end;
+	i = start - n;
+	j = end + n;
 
 	TCG_CopyPointsN(data, working_index, data, pivot_index, n);
 
 	while(1) {
-		while(TCG_ComparePolygonsDepth(data, i, working_index) > 0) {
+		do {
 			i += n;
-		}
+		} while(TCG_ComparePolygonsDepth(data, i, working_index) < 0);
 
-		while(TCG_ComparePolygonsDepth(data, j, working_index) < 0) {
+		do {
 			j -= n;
-		}
+		} while(TCG_ComparePolygonsDepth(data, j, working_index) > 0);
 
 		if(i >= j) break;
 
 		TCG_SwapPointsN(data, i, data, j, n);
-
-		i += n;
-		j -= n;
 	}
 
 	return j;
 }
 
-static void TCG_QuickSortDepth(const TCG_Data *data, uint start, uint end) {
-	uint num_elements, n, p;
+static void TCG_QuickSortDepth(const TCG_Data *data) {
+	TCG_PairInt pairs[32];
+	uint stack_size = 1, n = data->polygon_type;
 
-	n = data->polygon_type;
+	pairs[0].start = 0;
+	pairs[0].end = data->len - n;
 
-	if(start >= end) return;
+	while(stack_size > 0) {
+		TCG_PairInt pair = pairs[--stack_size];
 
-	num_elements = end - start + n;
+		while(pair.end - pair.start > 17 * n) {
+			int p = TCG_PartitionDepth(data, pair.start, pair.end);
+			uint left_size, right_size;
 
-	if(num_elements <= 8 * n) {
-		TCG_InsertionSortDepth(data, start, end);
-		return;
+			if(p <= (int) pair.start) {
+				pair.start += n;
+				continue;
+			}
+
+			if(p >= (int) pair.end) {
+				pair.end -= n;
+				continue;
+			}
+
+			left_size = (p - pair.start);
+			right_size = pair.end - (p + n);
+
+			if(left_size > right_size) {
+				pairs[stack_size].start = pair.start;
+				pairs[stack_size].end = p;
+				pair.start = p + n;
+			} else {
+				pairs[stack_size].start = p + n;
+				pairs[stack_size].end = pair.end;
+				pair.end = p;
+			}
+
+			stack_size++;
+		}
+
+		TCG_InsertionSortDepth(data, pair.start, pair.end);
 	}
-
-	p = TCG_PartitionDepth(data, start, end);
-
-	TCG_QuickSortDepth(data, start, p);
-	TCG_QuickSortDepth(data, p + n, end);
 }
 
 static void TCG_InsertionSortDepth(const TCG_Data *data, uint start, uint end) {
@@ -829,7 +856,7 @@ static void TCG_InsertionSortDepth(const TCG_Data *data, uint start, uint end) {
 		TCG_CopyPointsN(data, working_index, data, i, n);
 		j = (int) i - (int) n;
 
-		while((j >= 0) && TCG_ComparePolygonsDepth(data, working_index, j) > 0) {
+		while((j >= 0) && TCG_ComparePolygonsDepth(data, working_index, j) < 0) {
 			TCG_CopyPointsN(data, j + n, data, j, n);
 			j -= n;
 		}
@@ -1006,10 +1033,10 @@ int TCG_ComparePolygonsDepth(const TCG_Data *data, TCG_Uint p1, TCG_Uint p2) {
 	average_p2 /= n;
 
 	if(average_p1 > average_p2) {
-		return -1;
+		return 1;
 	}
 
-	return 1;
+	return -1;
 }
 
 void TCG_SortByDepth(TCG_Data *data) {
@@ -1021,7 +1048,22 @@ void TCG_SortByDepth(TCG_Data *data) {
 		data->increaseCapacity(data, data->len + n);
 	}
 	
-	TCG_QuickSortDepth(data, 0, data->len - n);
+	TCG_QuickSortDepth(data);
+}
+
+int TCG_IsSortedByDepth(const TCG_Data *data) {
+	uint i;
+	uint n = data->polygon_type;
+
+	if(data->len <= n) return 1;
+
+	for(i = 0; i < data->len - n; i += n) {
+		if(TCG_ComparePolygonsDepth(data, i, i + n) > 0) {
+			return 0;
+		}
+	}
+
+	return 1;
 }
 
 #endif /* TINYCG_IMPLEMENTATION */
