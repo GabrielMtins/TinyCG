@@ -3,6 +3,7 @@
 
 #include <SDL3/SDL.h>
 
+#define TINYCG_USE_STDLIB
 #define TINYCG_IMPLEMENTATION
 #include "TinyCG.h"
 
@@ -48,34 +49,6 @@ static const Vertex cube_vertices[] = {
 	{ 0.5f, -0.5f,  0.5f}, 
 	{-0.5f, -0.5f,  0.5f}, 
 };
-
-/**
- * The following functions is responsible for increasing the capacity of the
- * data if TinyCG needs to. 
- */
-int Data_IncreaseCapacity(TCG_Data *data, unsigned int expected_capacity) {
-	if(expected_capacity < data->capacity) {
-		return 0;
-	}
-
-	data->raw = realloc(
-			data->raw,
-			expected_capacity * data->stride * sizeof(float)
-			);
-
-	data->w = realloc(
-			data->w,
-			expected_capacity * sizeof(float)
-			);
-
-	if(data->raw == NULL || data->w == NULL) {
-		return 0;
-	}
-
-	data->capacity = expected_capacity;
-
-	return 1;
-}
 
 static SDL_Window *window;
 static SDL_Renderer *renderer;
@@ -163,10 +136,6 @@ int main(void) {
 			sizeof(Vertex) / sizeof(float),
 			0
 			);
-
-	data.increaseCapacity = Data_IncreaseCapacity;
-
-	Data_IncreaseCapacity(&data, 256);
 
 	while(running) {
 		while(SDL_PollEvent(&event)) {

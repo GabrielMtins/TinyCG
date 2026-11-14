@@ -29,6 +29,14 @@
  *
  * #define TINYCG_IMPLEMENTATION
  * #include "TinyCG.h"
+ *
+ * By default, TinyCG does not have any dependencies, not even libc. This means
+ * that you need to set up the library with your own custom allocators through
+ * function pointers like increaseCapacity (see TCG_Data). If you define
+ * TINYCG_USE_STDLIB before the implementation then the function pointer
+ * increaseCapacity will be set to a default allocator that uses stdlib malloc
+ * and realloc. With this, you can just append your data with TCG_AppendData
+ * without providing a custom allocator.
  */
 
 /**
@@ -38,8 +46,6 @@
 
 #ifndef TINYCG_H
 #define TINYCG_H
-
-#define TINYCG_IMPLEMENTATION
 
 #ifdef __cplusplus
 extern "C" {
@@ -221,6 +227,10 @@ int TCG_IsSortedByDepth(const TCG_Data *data);
 
 #ifdef TINYCG_IMPLEMENTATION 
 
+#ifdef TINYCG_USE_STDLIB
+#include <stdlib.h>
+#endif
+
 #define mat4_clean(m) do{ int i; for(i = 0; i < 16; i++) m[i] = 0.0f; } while(0)
 #define mat4_copy(a, b) do{ int i; for(i = 0; i < 16; i++) a[i] = b[i]; } while(0)
 #define vec3_copy(res, a) do{res[0]=a[0];res[1]=a[1];res[2]=a[2];} while(0)
@@ -322,6 +332,10 @@ static vec3r TCG_GetPoint(const TCG_Data *data, uint i);
 static void TCG_GetVec4(const TCG_Data *data, uint i, vec4 p);
 static void TCG_LerpPoints(const TCG_Data *data, uint res, uint from, uint to, float u);
 static int TCG_IncreaseCapacity(TCG_Data *data, uint expected);
+
+#ifdef TINYCG_USE_STDLIB
+static int TCG_MallocIncreaseCapacity(TCG_Data *data, uint expected); 
+#endif
 
 /* Visibility */
 static int TCG_IsPointVisible(const TCG_Data *data, uint point_index);
@@ -494,6 +508,38 @@ static int TCG_IncreaseCapacity(TCG_Data *data, uint expected) {
 
 	return data->increaseCapacity(data, expected);
 }
+
+#ifdef TINYCG_USE_STDLIB
+static int TCG_MallocIncreaseCapacity(TCG_Data *data, uint expected) {
+	uint better_expected = data->capacity * 2;
+
+	if(expected < data->capacity) {
+		return 0;
+	}
+
+	if(expected < better_expected) {
+		expected = better_expected;
+	}
+
+	data->raw = realloc(
+			data->raw,
+			expected * data->stride * sizeof(float)
+			);
+
+	data->w = realloc(
+			data->w,
+			expected * sizeof(float)
+			);
+
+	if(data->raw == NULL || data->w == NULL) {
+		return 0;
+	}
+
+	data->capacity = expected;
+
+	return 1;
+}
+#endif
 
 static int TCG_IsPointVisible(const TCG_Data *data, uint point_index) {
 	vec3r point;
@@ -901,6 +947,10 @@ TCG_Data TCG_BaseData(TCG_Uint polygon_type, TCG_Uint stride, TCG_Uint position_
 	data.userdata = TCG_NULL;
 	data.increaseCapacity = TCG_NULL;
 	data.putPixel = TCG_NULL;
+
+#ifdef TINYCG_USE_STDLIB
+	data.increaseCapacity = TCG_MallocIncreaseCapacity;
+#endif
 
 	data.len = 0;
 	data.capacity = 0;
