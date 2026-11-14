@@ -177,11 +177,21 @@ float TCG_Radians(float x);
  */
 void TCG_Mat4Perspective(TCG_Mat4 m, float fov_y, float ratio, float near, float far);
 
+/**
+ * The following functions do NOT compute matrix multiplications.
+ * They just copies the value to the matrix passed as an argument.
+ */
 void TCG_Mat4Identity(TCG_Mat4 m);
 void TCG_Mat4Translate(TCG_Mat4 m, TCG_Vec3 position);
 void TCG_Mat4Scale(TCG_Mat4 m, TCG_Vec3 scale);
 void TCG_Mat4RotateX(TCG_Mat4 m, float angle);
 void TCG_Mat4RotateY(TCG_Mat4 m, float angle);
+void TCG_Mat4RotateZ(TCG_Mat4 m, float angle);
+
+/**
+ * The following functions multiplies a * b and saves the result
+ * to b. B = A * B
+ */
 void TCG_Mat4Mul(const TCG_Mat4 a, TCG_Mat4 b);
 
 /* ======== SORTING ======== */
@@ -1070,6 +1080,22 @@ void TCG_Mat4RotateY(TCG_Mat4 m, float angle) {
 	m[5] = 1.0f;
 	m[8] = sin_ang;
 	m[10] = cos_ang;
+	m[15] = 1.0f;
+}
+
+void TCG_Mat4RotateZ(TCG_Mat4 m, float angle) {
+	float cos_ang, sin_ang;
+
+	cos_ang = COSF(angle);
+	sin_ang = SINF(angle);
+
+	mat4_clean(m);
+
+	m[0] = cos_ang;
+	m[1] = sin_ang;
+	m[4] = -sin_ang;
+	m[5] = cos_ang;
+	m[10] = 1.0f;
 	m[15] = 1.0f;
 }
 
