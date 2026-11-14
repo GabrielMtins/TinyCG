@@ -973,8 +973,8 @@ TCG_Data TCG_BaseData(TCG_Uint polygon_type, TCG_Uint stride, TCG_Uint position_
 
 #ifdef TINYCG_USE_STDLIB
 void TCG_FreeData(TCG_Data *data) {
-	free(data->raw);
-	free(data->w);
+	if(data->raw != TCG_NULL) free(data->raw);
+	if(data->w != TCG_NULL) free(data->w);
 
 	data->raw = TCG_NULL;
 	data->w = TCG_NULL;
