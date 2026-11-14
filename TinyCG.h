@@ -19,7 +19,7 @@
  */
 
 /**
- * 1. Introduction
+ * Introduction
  *
  * TinyCG is an utility library for Computer Graphics. It is written in
  * C89 (ANSI C) without dependencies and distributed under the zlib license.
@@ -33,8 +33,7 @@
 
 /**
  * TODO
- * - Add a rasterization function.
- * - Handling failing to increase capacity.
+ * - Add rasterization functions.
  */
 
 #ifndef TINYCG_H
@@ -107,17 +106,18 @@ typedef struct TCG_Data {
 	TCG_Uint capacity;
 } TCG_Data;
 
-/* ==== PUBLIC API DECLARATION BEGIN ==== */
+/* ==== PUBLIC API DECLARATIONS BEGIN ==== */
 
 /* ==== VERTEX MANIPULATION ==== */
 
 TCG_Data TCG_BaseData(TCG_Uint polygon_type, TCG_Uint stride, TCG_Uint position_offset);
 
 /**
- * Copies the num points in p to the end of the data, increasing the capacity
+ * Copies num_points in p to the end of the data, increasing the capacity
  * if necessary. It also sets the w value of the news points as 1.0f.
+ * Returns 0 if it fails (if it increaseCapacity fails).
  */
-void TCG_AppendData(TCG_Data *data, const void *p, TCG_Uint num_points);
+int TCG_AppendData(TCG_Data *data, const void *p, TCG_Uint num_points);
 
 /**
  * Transforms the data by using the given matrix. The matrix must be in the
@@ -139,12 +139,14 @@ void TCG_ResetW(const TCG_Data *data);
 /**
  * Clips a polygon if it contains at least a point outside the view frustum.
  */
-int TCG_DumbClipping(TCG_Data *data);
+void TCG_DumbClipping(TCG_Data *data);
 
 /**
  * Clips lines or triangles properly by intersecting and splitting them with the
  * view frustum planes. For other types of polygons, the
  * function just calls TCG_DumbClipping instead.
+ * This function must be called before applying the projection with
+ * TCG_ApplyProjection.
  */
 void TCG_SmartClipping(TCG_Data *data);
 
@@ -152,7 +154,8 @@ void TCG_SmartClipping(TCG_Data *data);
  * Cull front or back faces. Only works with triangles.
  * flags can be TCG_FRONTFACE or TCG_BACKFACE
  * This function can be called only after the projection was applied
- * to the vertices and it was scaled to the screen space.
+ * to the vertices (TCG_ApplyProjection) and it was scaled to the screen space
+ * (TCG_ScaleToScreenSize).
  */
 void TCG_CullFaces(TCG_Data *data, int flags);
 
@@ -203,7 +206,7 @@ int TCG_ComparePolygonsDepth(const TCG_Data *data, TCG_Uint p1, TCG_Uint p2);
  * Intended for be used when rendering with painter's algorithm.
  * It works with any type of polygon.
  */
-void TCG_SortByDepth(TCG_Data *data);
+int TCG_SortByDepth(TCG_Data *data);
 
 int TCG_IsSortedByDepth(const TCG_Data *data);
 
@@ -282,6 +285,8 @@ typedef struct TCG_ClipContext {
 
 	vec4 normal;
 	uint working_index;
+
+	int error;
 } TCG_ClipContext;
 
 typedef struct TCG_PairInt {
@@ -297,7 +302,7 @@ static const vec4 frustum_planes[6] = {
 	{0.0f, 0.0f, -1.0f, 1.0f},
 };
 
-/* ==== PRIVATE FUNCTIONS DEFINITION BEGIN ==== */
+/* ==== PRIVATE FUNCTIONS DECLARATIONS BEGIN ==== */
 
 /* Math functions */
 static float TCG_Cos(float x);
@@ -309,13 +314,14 @@ static void TCG_SwapFloatN(float *dst, float *src, uint n);
 static void TCG_CopyFloatN(float *dst, const float *src, uint n);
 static void TCG_SwapPointsN(const TCG_Data *output, uint out_i, const TCG_Data *input, uint in_i, uint n);
 static void TCG_CopyPointsN(const TCG_Data *output, uint out_i, const TCG_Data *input, uint in_i, uint n);
-static void TCG_PushPointsToOutput(TCG_Data *output, const TCG_Data *input, uint index, uint n);
+static int TCG_PushPointsToOutput(TCG_Data *output, const TCG_Data *input, uint index, uint n);
 static void TCG_RemovePolygon(TCG_Data *data, uint index);
 
 /* Data manipulation */
 static vec3r TCG_GetPoint(const TCG_Data *data, uint i);
 static void TCG_GetVec4(const TCG_Data *data, uint i, vec4 p);
 static void TCG_LerpPoints(const TCG_Data *data, uint res, uint from, uint to, float u);
+static int TCG_IncreaseCapacity(TCG_Data *data, uint expected);
 
 /* Visibility */
 static int TCG_IsPointVisible(const TCG_Data *data, uint point_index);
@@ -329,7 +335,7 @@ static TCG_ClipLineRes TCG_ClipLine(const vec4 p1, const vec4 p2, const vec4 nor
 static TCG_ClipContext TCG_CreateClipContext(TCG_Data *data, uint poly_start);
 static void TCG_PushToOutputClipContext(TCG_ClipContext *ctx, uint index);
 static void TCG_ClipOnClipContext(TCG_ClipContext *ctx);
-static void TCG_MakeTriClipContext(TCG_ClipContext *ctx);
+static int TCG_MakeTriClipContext(TCG_ClipContext *ctx);
 
 /* General clipping */
 static uint TCG_ClipPoly2(const TCG_Data *data, uint poly_start);
@@ -415,9 +421,11 @@ static void TCG_CopyPointsN(const TCG_Data *output, uint out_i, const TCG_Data *
 			);
 }
 
-static void TCG_PushPointsToOutput(TCG_Data *output, const TCG_Data *input, uint index, uint n) {
+static int TCG_PushPointsToOutput(TCG_Data *output, const TCG_Data *input, uint index, uint n) {
 	if(output->len + n > output->capacity) {
-		output->increaseCapacity(output, output->len + n);
+		if(!TCG_IncreaseCapacity(output, output->len + n)) {
+			return 0;
+		}
 	}
 
 	TCG_CopyPointsN(
@@ -429,6 +437,8 @@ static void TCG_PushPointsToOutput(TCG_Data *output, const TCG_Data *input, uint
 			);
 
 	output->len += n;
+
+	return 1;
 }
 
 static void TCG_RemovePolygon(TCG_Data *data, uint index) {
@@ -477,6 +487,12 @@ static void TCG_LerpPoints(const TCG_Data *data, uint res, uint from, uint to, f
 			data->raw[from + i] * (1.0f - u) + 
 			data->raw[to + i] * u;
 	}
+}
+
+static int TCG_IncreaseCapacity(TCG_Data *data, uint expected) {
+	if(data->increaseCapacity == TCG_NULL) return 0;
+
+	return data->increaseCapacity(data, expected);
 }
 
 static int TCG_IsPointVisible(const TCG_Data *data, uint point_index) {
@@ -564,9 +580,13 @@ static TCG_ClipContext TCG_CreateClipContext(TCG_Data *data, uint poly_start) {
 	TCG_ClipContext ctx;
 	uint stack_size = 40;
 	uint sp;
+	ctx.error = 0;
 
 	if(data->len + stack_size > data->capacity) {
-		data->increaseCapacity(data, data->len + stack_size);
+		if(!TCG_IncreaseCapacity(data, data->len + stack_size)) {
+			ctx.error = 1;
+			return ctx;
+		}
 	}
 
 	sp = data->capacity;
@@ -640,31 +660,38 @@ static void TCG_ClipOnClipContext(TCG_ClipContext *ctx) {
 	}
 }
 
-static void TCG_MakeTriClipContext(TCG_ClipContext *ctx) {
+static int TCG_MakeTriClipContext(TCG_ClipContext *ctx) {
 	uint i = 0;
+	int success;
 	uint s;
 
 	s = ctx->output_list.start;
 
 	if(ctx->output_list.len == 0) {
-		return;
+		return 1;
 	}
 
 	for(i = 1; i < ctx->output_list.len - 1; i++) {
-		TCG_PushPointsToOutput(
+		success = TCG_PushPointsToOutput(
 				ctx->data,
 				ctx->data,
 				s,
 				1
 				);
 
-		TCG_PushPointsToOutput(
+		if(!success) return 0;
+
+		success = TCG_PushPointsToOutput(
 				ctx->data,
 				ctx->data,
 				s + i,
 				2
 				);
+
+		if(!success) return 0;
 	}
+
+	return 1;
 }
 
 static uint TCG_ClipPoly2(const TCG_Data *data, uint poly_start) {
@@ -702,6 +729,8 @@ static uint TCG_ClipPoly3(TCG_Data *data, uint poly_start) {
 
 	ctx = TCG_CreateClipContext(data, poly_start);
 
+	if(ctx.error) return 0;
+
 	for(i = 0; i < 6; i++) {
 		vec4_copy(ctx.normal, frustum_planes[i]);
 		TCG_Swap(TCG_ClipList, ctx.input_list, ctx.output_list);
@@ -712,7 +741,7 @@ static uint TCG_ClipPoly3(TCG_Data *data, uint poly_start) {
 		if(ctx.output_list.len == 0) return 0;
 	}
 
-	TCG_MakeTriClipContext(&ctx);
+	if(!TCG_MakeTriClipContext(&ctx)) return 0;
 
 	return (ctx.output_list.len - 2) * 3;
 }
@@ -882,11 +911,13 @@ TCG_Data TCG_BaseData(TCG_Uint polygon_type, TCG_Uint stride, TCG_Uint position_
 	return data;
 }
 
-void TCG_AppendData(TCG_Data *data, const void *p, TCG_Uint num_points) {
+int TCG_AppendData(TCG_Data *data, const void *p, TCG_Uint num_points) {
 	uint i;
 
 	if(data->len + num_points > data->capacity) {
-		data->increaseCapacity(data, data->len + num_points);
+		if(!TCG_IncreaseCapacity(data, data->len + num_points)) {
+			return 0;
+		}
 	}
 
 	TCG_CopyFloatN(
@@ -900,6 +931,8 @@ void TCG_AppendData(TCG_Data *data, const void *p, TCG_Uint num_points) {
 	}
 
 	data->len += num_points;
+
+	return 1;
 }
 
 void TCG_TransformPart(const TCG_Data *data, const TCG_Mat4 m, TCG_Uint start_point, TCG_Uint len) {
@@ -922,7 +955,7 @@ void TCG_Transform(const TCG_Data *data, const TCG_Mat4 m) {
 	TCG_TransformPart(data, m, 0, data->len);
 }
 
-int TCG_DumbClipping(TCG_Data *data) {
+void TCG_DumbClipping(TCG_Data *data) {
 	uint i = 0, n = data->polygon_type;
 	
 	while(i < data->len) {
@@ -933,8 +966,6 @@ int TCG_DumbClipping(TCG_Data *data) {
 
 		TCG_RemovePolygon(data, i);
 	}
-
-	return 1;
 }
 
 void TCG_SmartClipping(TCG_Data *data) {
@@ -1133,16 +1164,20 @@ int TCG_ComparePolygonsDepth(const TCG_Data *data, TCG_Uint p1, TCG_Uint p2) {
 	return -1;
 }
 
-void TCG_SortByDepth(TCG_Data *data) {
+int TCG_SortByDepth(TCG_Data *data) {
 	uint n = data->polygon_type;
 
-	if(data->len < n) return;
+	if(data->len < n) return 0;
 
 	if(data->len + n > data->capacity) {
-		data->increaseCapacity(data, data->len + n);
+		if(TCG_IncreaseCapacity(data, data->len + n)) {
+			return 0;
+		}
 	}
 	
 	TCG_QuickSortDepth(data);
+
+	return 1;
 }
 
 int TCG_IsSortedByDepth(const TCG_Data *data) {
