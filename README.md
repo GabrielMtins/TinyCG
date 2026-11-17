@@ -11,35 +11,61 @@ in at least one source file:
 #include "TinyCG.h"
 ```
 
+By default, TinyCG does not have any dependencies. This means that you need to
+provide your own custom allocators (see `TCG_Data.increaseCapacity` in
+`TinyCG.h`). If you want to use a default allocator that is based on `malloc`,
+you can define `TINYCG_USE_STDLIB` before `TINYCG_IMPLEMENTATION`. To add new
+data, you can just use `TCG_AppendData`.
+
+# Features
+
+- Clipping for lines and triangles with the view frustum.
+- Face culling.
+- Basic matrix transformations.
+- Sorting triangles by depth.
+
 # Usage
 
 A typical usage of TinyCG:
 
 ```c
+#define TINYCG_USE_STDLIB
+#define TINYCG_IMPLEMENTATION
+#include "TinyCG.h"
+
 typedef struct {
-    float x, y, z;
-    float r, g, b;
-    float u, v;
+    Vec3 pos;
+    Vec3 color;
+    Vec2 uv;
 } Vertex;
 
-TCG_Data data = TCG_BaseData(TCG_TRIANGLE, sizeof(Vertex) / sizeof(float), 0);
-TCG_Mat4 projection;
+extern const Vertex *vertex_data;
+extern size_t vertex_data_size;
 
-TCG_Perspective(projection, TCG_Radians(45.0f), 1.77f, 0.1f, 10.0f);
+int main(void) {
+    TCG_Data data = TCG_BaseData(
+                        TCG_TRIANGLE, 
+                        sizeof(Vertex) / sizeof(float), 
+                        offsetof(Vertex, pos)
+                        );
+    
+    TCG_AppendData(&data, vertex_data, vertex_data_size);
+    
+    TCG_Mat4 projection;
+    
+    TCG_Perspective(projection, TCG_Radians(45.0f), 1.77f, 0.1f, 10.0f);
+    
+    TCG_Transform(&data, projection);
+    TCG_SmartClipping(&data);
+    TCG_ApplyProjection(&data);
+    TCG_ScaleToScreenSize(&data, 1280, 720);
+    TCG_CullFaces(&data, TCG_BACKFACE);
+    TCG_SortByDepth(&data);
+    
+    render_to_screen(&data); 
 
-copy_vertex_buffer_to(data.raw);
-data.w = create_float_buffer();
-data.len = // setup len
-data.capacity = // setup capacity
+    TCG_FreeData(&data);
 
-TCG_ResetW(&data);
-
-TCG_Transform(&data, projection);
-TCG_SmartClipping(&data);
-TCG_ApplyProjection(&data);
-TCG_ScaleToScreenSize(&data, 1280, 720);
-TCG_CullFaces(&data, TCG_BACKFACE);
-TCG_SortByDepth(&data);
-
-render_to_screen(&data); 
+    return 0;
+}
 ```
