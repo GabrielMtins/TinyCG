@@ -46,7 +46,7 @@ int main(void) {
     TCG_Data data = TCG_BaseData(
                         TCG_TRIANGLE, 
                         sizeof(Vertex) / sizeof(float), 
-                        offsetof(Vertex, pos)
+                        offsetof(Vertex, pos) / sizeof(float)
                         );
     
     TCG_AppendData(&data, vertex_data, vertex_data_size);
