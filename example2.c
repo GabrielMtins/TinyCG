@@ -189,7 +189,7 @@ int main(void) {
 
 		render();
 
-		rotation += 0.001f;
+		rotation = 0.0002f * SDL_GetTicks();
 
 		SDL_RenderPresent(renderer);
 	}
