@@ -1,3 +1,8 @@
+/*
+ * Compile with:
+ * cc example.c -o main -lSDL3
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -151,4 +156,6 @@ int main(void) {
 
 		SDL_RenderPresent(renderer);
 	}
+
+	return 0;
 }
