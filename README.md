@@ -23,6 +23,8 @@ data, you can just use `TCG_AppendData`.
 - Face culling.
 - Basic matrix transformations.
 - Sorting triangles by depth.
+- Mesh triangulation.
+- Polygon rasterization with affine or perspective-correct texture mapping.
 
 # Usage
 
