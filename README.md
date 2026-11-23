@@ -71,3 +71,7 @@ int main(void) {
     return 0;
 }
 ```
+
+This repository contains the two following examples:
+- [example.c](/example.c): Basic SDL3 example.
+- [example2.c](/example2.c): Basic SDL3 example with use of the rendering functions.
