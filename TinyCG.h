@@ -194,6 +194,11 @@ void TCG_ApplyProjection(const TCG_Data *data);
  */
 void TCG_ScaleToScreenSize(const TCG_Data *data, TCG_Uint w, TCG_Uint h);
 
+/**
+ * Triangulates a mesh that has polygon_type > 3.
+ */
+void TCG_Triangulate(TCG_Data *data);
+
 /* ==== MATH AND MATRICES ==== */
 
 float TCG_Radians(float x);
@@ -373,6 +378,7 @@ static int TCG_IsPolygonFullyVisible(const TCG_Data *data, uint poly_start);
 /* Transforming points */
 static void TCG_ApplyTransformOnPoint(const TCG_Data *data, uint point_index, const TCG_Mat4 m);
 static TCG_ClipLineRes TCG_ClipLine(const vec4 p1, const vec4 p2, const vec4 normal_plane);
+static void TCG_MakeTriangulation(const TCG_Data *data, uint tri_start, uint poly_start);
 
 /* Clipping triangles */
 static TCG_ClipContext TCG_CreateClipContext(TCG_Data *data, uint poly_start);
@@ -659,6 +665,17 @@ static TCG_ClipLineRes TCG_ClipLine(const vec4 p1, const vec4 p2, const vec4 nor
 	}
 
 	return pair;
+}
+
+static void TCG_MakeTriangulation(const TCG_Data *data, uint tri_start, uint poly_start) {
+	uint i;
+	uint n = data->polygon_type;
+
+	for(i = 1; i < n - 1; i++) {
+		TCG_CopyPointsN(data, tri_start++, data, poly_start, 1);
+		TCG_CopyPointsN(data, tri_start++, data, poly_start + i, 1);
+		TCG_CopyPointsN(data, tri_start++, data, poly_start + i + 1, 1);
+	}
 }
 
 static TCG_ClipContext TCG_CreateClipContext(TCG_Data *data, uint poly_start) {
@@ -1300,6 +1317,45 @@ void TCG_ScaleToScreenSize(const TCG_Data *data, TCG_Uint w, TCG_Uint h) {
 		if(p[0] >= w - 0.1f) p[0] = w - 1.0f;
 		if(p[1] >= h - 0.1f) p[1] = h - 1.0f;
 	}
+}
+
+void TCG_Triangulate(TCG_Data *data) {
+	uint n = data->polygon_type;
+	uint poly_vertices = (n - 2) * 3;
+	uint new_len = (data->len / n) * poly_vertices;
+	uint new_capacity = new_len + n;
+	uint working_index;
+	uint i;
+	uint end;
+
+	if(data->polygon_type <= 3) return;
+
+	if(!TCG_IncreaseCapacity(data, new_capacity)) {
+		return;
+	}
+
+	working_index = data->capacity - n;
+	i = data->len - n;
+	end = new_len - poly_vertices;
+
+	while(1) {
+		TCG_CopyPointsN(
+				data,
+				working_index,
+				data,
+				i,
+				n
+				);
+
+		TCG_MakeTriangulation(data, end, working_index);
+
+		if(i == 0) break;
+		i -= n;
+		end -= poly_vertices;
+	}
+
+	data->len = new_len;
+	data->polygon_type = TCG_TRIANGLE;
 }
 
 float TCG_Radians(float x) {
