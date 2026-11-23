@@ -39,12 +39,6 @@
  * without providing a custom allocator.
  */
 
-/**
- * TODO
- * - Add perspective-correct rendering functions.
- * - Add triangulation functions (transforms data with polygon_type > 3 to triangles).  
- */
-
 #ifndef TINYCG_H
 #define TINYCG_H
 
@@ -56,8 +50,9 @@ extern "C" {
 #define TCG_BACKFACE 0
 #define TCG_FRONTFACE 1
 
-#define TCG_TRIANGLE 3
 #define TCG_LINE 2
+#define TCG_TRIANGLE 3
+#define TCG_QUAD 4
 
 typedef unsigned int TCG_Uint;
 typedef float TCG_Mat4[16];
@@ -76,15 +71,13 @@ typedef struct TCG_Data {
     * If capacity > len, a function can call increaseCapacity() to be able
     * to handle more data. The first argument is the struct that called the
     * function and the second argument is the new expected capacity.
-	* Returns 0 if it failed its allocation of more data. If the user calls
-	* to set a capacity less then the current capacity, the function just
-	* returns 1. Returns 1 at success.
+	* Returns 0 if it failed its allocation of more data. 
     */
 	int (*increaseCapacity)(struct TCG_Data *, TCG_Uint);
 
 	/**
 	 * The first argument is userdata and the second argument is a pointer
-	 * to the user vertex data type. */
+	 * to the vertex data. */
 	void (*putPixel)(void *, const void *);
 
 	/**
@@ -239,7 +232,6 @@ int TCG_SortByDepth(TCG_Data *data);
 int TCG_IsSortedByDepth(const TCG_Data *data);
 
 /* ======= RASTERIZATION ======= */
-/* TODO */
 
 /**
  * Renders all polygons using wireframe mode.
@@ -252,6 +244,12 @@ void TCG_RenderWireframe(TCG_Data *data);
  * It works with any type of polygon.
  */
 void TCG_RenderAffine(TCG_Data *data);
+
+/**
+ * Renders all polygons using perspective correct texture mapping.
+ * It works with any type of polygon.
+ */
+void TCG_RenderPerspective(TCG_Data *data);
 
 #ifdef __cplusplus
 }
@@ -365,6 +363,8 @@ static void TCG_RemovePolygon(TCG_Data *data, uint index);
 static vec3r TCG_GetPoint(const TCG_Data *data, uint i);
 static void TCG_GetVec4(const TCG_Data *data, uint i, vec4 p);
 static void TCG_LerpPoints(const TCG_Data *data, uint res, uint from, uint to, float u);
+static void TCG_InterpPointsPerspective(const TCG_Data *data, uint res, uint from, uint to, float u);
+static void TCG_InterpPoints(const TCG_Data *data, uint res, uint from, uint to, float u, int affine);
 static int TCG_IncreaseCapacity(TCG_Data *data, uint expected);
 
 #ifdef TINYCG_USE_STDLIB
@@ -404,12 +404,13 @@ static void TCG_InsertionSortDepth(const TCG_Data *data, uint start, uint end);
 /* Rasterization */
 static void TCG_SortPointsByY(const TCG_Data *data, uint indices[3]);
 static void TCG_FloorPointCoords(const TCG_Data *data, uint index);
-static void TCG_RasterizeAffineLine(const TCG_Data *data, uint indices[2]);
-static void TCG_RasterizeAffineTrianglePart(const TCG_Data *data, uint indices[3], uint start);
-static void TCG_RasterizeAffineTriangle(const TCG_Data *data, uint indices[3]);
-static void TCG_RasterizeAffineAllLines(const TCG_Data *data);
-static void TCG_RasterizeAffineAllTriangles(const TCG_Data *data);
-static void TCG_RasterizeAffineAllPolygonsGeneric(const TCG_Data *data);
+static void TCG_RasterizeLine(const TCG_Data *data, uint indices[2], int affine);
+static void TCG_RasterizeTrianglePart(const TCG_Data *data, uint indices[3], uint start, int affine);
+static void TCG_RasterizeTriangle(const TCG_Data *data, uint indices[3], int affine);
+static void TCG_RasterizeAllLines(const TCG_Data *data, int affine);
+static void TCG_RasterizeAllTriangles(const TCG_Data *data, int affine);
+static void TCG_RasterizeAllPolygonsGeneric(const TCG_Data *data, int affine);
+static void TCG_RenderFullData(TCG_Data *data, int affine);
 
 static float TCG_Cos(float x) {
 	float x2, sign = 1.0f;
@@ -481,10 +482,8 @@ static void TCG_CopyPointsN(const TCG_Data *output, uint out_i, const TCG_Data *
 }
 
 static int TCG_PushPointsToOutput(TCG_Data *output, const TCG_Data *input, uint index, uint n) {
-	if(output->len + n > output->capacity) {
-		if(!TCG_IncreaseCapacity(output, output->len + n)) {
-			return 0;
-		}
+	if(!TCG_IncreaseCapacity(output, output->len + n)) {
+		return 0;
 	}
 
 	TCG_CopyPointsN(
@@ -548,7 +547,51 @@ static void TCG_LerpPoints(const TCG_Data *data, uint res, uint from, uint to, f
 	}
 }
 
+static void TCG_InterpPointsPerspective(const TCG_Data *data, uint res, uint from, uint to, float u) {
+	uint i;
+
+	float inv_wfrom = 1.0f / data->w[from];
+	float inv_wto = 1.0f / data->w[to];
+	float inv_wlerp = inv_wfrom * (1.0f - u) + inv_wto * u;
+
+	data->w[res] = 1.0f / inv_wlerp;
+
+	res *= data->stride;
+	from *= data->stride;
+	to *= data->stride;
+
+	for(i = 0; i < 3; i++) {
+		data->raw[res + i + data->position_offset] = 
+			data->raw[from + i + data->position_offset] * (1.0f - u) + 
+			data->raw[to + i + data->position_offset] * u;
+	}
+
+	for(i = 0; i < data->stride; i++) {
+		if(i == data->position_offset) {
+			i += 2;
+			continue;
+		}
+
+		data->raw[res + i] = (
+				data->raw[from + i] * inv_wfrom * (1.0f - u) + 
+				data->raw[to + i] * inv_wto * u
+				) / inv_wlerp;
+	}
+}
+
+static void TCG_InterpPoints(const TCG_Data *data, uint res, uint from, uint to, float u, int affine) {
+	if(affine) {
+		TCG_LerpPoints(data, res, from, to, u);
+	} else {
+		TCG_InterpPointsPerspective(data, res, from, to, u);
+	}
+}
+
 static int TCG_IncreaseCapacity(TCG_Data *data, uint expected) {
+	if(expected < data->capacity) {
+		return 1;
+	}
+
 	if(data->increaseCapacity == TCG_NULL) return 0;
 
 	return data->increaseCapacity(data, expected);
@@ -557,28 +600,33 @@ static int TCG_IncreaseCapacity(TCG_Data *data, uint expected) {
 #ifdef TINYCG_USE_STDLIB
 static int TCG_MallocIncreaseCapacity(TCG_Data *data, uint expected) {
 	uint better_expected = data->capacity * 2;
-
-	if(expected < data->capacity) {
-		return 1;
-	}
+	float *new_raw, *new_w;
 
 	if(expected < better_expected) {
 		expected = better_expected;
 	}
 
-	data->raw = realloc(
+	new_raw = (float *) realloc(
 			data->raw,
 			expected * data->stride * sizeof(float)
 			);
 
-	data->w = realloc(
+	if(new_raw == NULL) {
+		return 0;
+	}
+
+	data->raw = new_raw;
+
+	new_w = (float *) realloc(
 			data->w,
 			expected * sizeof(float)
 			);
 
-	if(data->raw == NULL || data->w == NULL) {
+	if(new_w == NULL) {
 		return 0;
 	}
+
+	data->w = new_w;
 
 	data->capacity = expected;
 
@@ -684,11 +732,9 @@ static TCG_ClipContext TCG_CreateClipContext(TCG_Data *data, uint poly_start) {
 	uint sp;
 	ctx.error = 0;
 
-	if(data->len + stack_size > data->capacity) {
-		if(!TCG_IncreaseCapacity(data, data->len + stack_size)) {
-			ctx.error = 1;
-			return ctx;
-		}
+	if(!TCG_IncreaseCapacity(data, data->len + stack_size)) {
+		ctx.error = 1;
+		return ctx;
 	}
 
 	sp = data->capacity;
@@ -1016,7 +1062,7 @@ static void TCG_FloorPointCoords(const TCG_Data *data, uint index) {
 	ref[1] = (int) ref[1];
 }
 
-static void TCG_RasterizeAffineLine(const TCG_Data *data, uint indices[2]) {
+static void TCG_RasterizeLine(const TCG_Data *data, uint indices[2], int affine) {
 	vec3r p0 = TCG_GetPoint(data, indices[0]);
 	vec3r p1 = TCG_GetPoint(data, indices[1]);
 	int dx = p0[0] - p1[0];
@@ -1033,12 +1079,13 @@ static void TCG_RasterizeAffineLine(const TCG_Data *data, uint indices[2]) {
 	d = d + 1;
 
 	for(i = 0; i < d; i++) {
-		TCG_LerpPoints(
+		TCG_InterpPoints(
 				data,
 				working_index,
 				indices[0],
 				indices[1],
-				(float) i / d
+				(float) i / d,
+				affine
 				);
 
 		TCG_FloorPointCoords(data, working_index);
@@ -1050,7 +1097,7 @@ static void TCG_RasterizeAffineLine(const TCG_Data *data, uint indices[2]) {
 	}
 }
 
-static void TCG_RasterizeAffineTrianglePart(const TCG_Data *data, uint indices[3], uint start) {
+static void TCG_RasterizeTrianglePart(const TCG_Data *data, uint indices[3], uint start, int affine) {
 	int i;
 	uint left_edge = data->capacity - 3; /* p0 -> p1 */
 	uint right_edge = data->capacity - 2; /* p0 -> p2 */
@@ -1069,30 +1116,33 @@ static void TCG_RasterizeAffineTrianglePart(const TCG_Data *data, uint indices[3
 		int dx;
 		int j;
 
-		TCG_LerpPoints(
+		TCG_InterpPoints(
 				data,
 				left_edge,
 				indices[start], indices[start + 1],
-				(float) (i - p[start]) / (p[start + 1] - p[start])
+				(float) (i - p[start]) / (p[start + 1] - p[start]),
+				affine
 				);
 
-		TCG_LerpPoints(
+		TCG_InterpPoints(
 				data,
 				right_edge,
 				indices[0], indices[2],
-				(float) (i - p[0]) / (p[2] - p[0])
+				(float) (i - p[0]) / (p[2] - p[0]),
+				affine
 				);
 
 		dx = TCG_GetPoint(data, left_edge)[0] - TCG_GetPoint(data, right_edge)[0];
 		dx = ABSF(dx) + 1;
 
 		for(j = 0; j <= dx; j++) {
-			TCG_LerpPoints(
+			TCG_InterpPoints(
 					data,
 					lerp_point,
 					left_edge,
 					right_edge,
-					(float) j / dx
+					(float) j / dx,
+					affine
 					);
 
 			TCG_GetPoint(data, lerp_point)[1] = i;
@@ -1106,13 +1156,13 @@ static void TCG_RasterizeAffineTrianglePart(const TCG_Data *data, uint indices[3
 	}
 }
 
-static void TCG_RasterizeAffineTriangle(const TCG_Data *data, uint indices[3]) {
+static void TCG_RasterizeTriangle(const TCG_Data *data, uint indices[3], int affine) {
 	TCG_SortPointsByY(data, indices);
-	TCG_RasterizeAffineTrianglePart(data, indices, 0);
-	TCG_RasterizeAffineTrianglePart(data, indices, 1);
+	TCG_RasterizeTrianglePart(data, indices, 0, affine);
+	TCG_RasterizeTrianglePart(data, indices, 1, affine);
 }
 
-static void TCG_RasterizeAffineAllLines(const TCG_Data *data) {
+static void TCG_RasterizeAllLines(const TCG_Data *data, int affine) {
 	uint i;
 	uint indices[2];
 
@@ -1120,11 +1170,11 @@ static void TCG_RasterizeAffineAllLines(const TCG_Data *data) {
 		indices[0] = i;
 		indices[1] = i + 1;
 
-		TCG_RasterizeAffineLine(data, indices);
+		TCG_RasterizeLine(data, indices, affine);
 	}
 }
 
-static void TCG_RasterizeAffineAllTriangles(const TCG_Data *data) {
+static void TCG_RasterizeAllTriangles(const TCG_Data *data, int affine) {
 	uint i;
 	uint indices[3];
 
@@ -1133,14 +1183,15 @@ static void TCG_RasterizeAffineAllTriangles(const TCG_Data *data) {
 		indices[1] = i + 1;
 		indices[2] = i + 2;
 		
-		TCG_RasterizeAffineTriangle(
+		TCG_RasterizeTriangle(
 				data,
-				indices
+				indices,
+				affine
 				);
 	}
 }
 
-static void TCG_RasterizeAffineAllPolygonsGeneric(const TCG_Data *data) {
+static void TCG_RasterizeAllPolygonsGeneric(const TCG_Data *data, int affine) {
 	uint i, j;
 	uint n = data->polygon_type;
 	uint indices[3];
@@ -1151,8 +1202,32 @@ static void TCG_RasterizeAffineAllPolygonsGeneric(const TCG_Data *data) {
 			indices[1] = i + j;
 			indices[2] = i + j + 1;
 
-			TCG_RasterizeAffineTriangle(data, indices);
+			TCG_RasterizeTriangle(data, indices, affine);
 		}
+	}
+}
+
+static void TCG_RenderFullData(TCG_Data *data, int affine) {
+	if(data->putPixel == TCG_NULL) {
+		return;
+	}
+
+	if(!TCG_IncreaseCapacity(data, data->len + 3)) {
+		return;
+	}
+
+	switch(data->polygon_type) {
+		case TCG_LINE:
+			TCG_RasterizeAllLines(data, affine);
+			break;
+
+		case TCG_TRIANGLE:
+			TCG_RasterizeAllTriangles(data, affine);
+			break;
+
+		default:
+			TCG_RasterizeAllPolygonsGeneric(data, affine);
+			break;
 	}
 }
 
@@ -1194,10 +1269,8 @@ void TCG_FreeData(TCG_Data *data) {
 int TCG_AppendData(TCG_Data *data, const void *p, TCG_Uint num_points) {
 	uint i;
 
-	if(data->len + num_points > data->capacity) {
-		if(!TCG_IncreaseCapacity(data, data->len + num_points)) {
-			return 0;
-		}
+	if(!TCG_IncreaseCapacity(data, data->len + num_points)) {
+		return 0;
 	}
 
 	TCG_CopyFloatN(
@@ -1476,11 +1549,10 @@ int TCG_ComparePolygonsDepth(const TCG_Data *data, TCG_Uint p1, TCG_Uint p2) {
 	average_p1 /= n;
 	average_p2 /= n;
 
-	if(average_p1 > average_p2) {
-		return 1;
-	}
+	if(average_p1 > average_p2) return 1;
+	if(average_p1 < average_p2) return -1;
 
-	return -1;
+	return 0;
 }
 
 int TCG_SortByDepth(TCG_Data *data) {
@@ -1488,12 +1560,10 @@ int TCG_SortByDepth(TCG_Data *data) {
 
 	if(data->len < n) return 0;
 
-	if(data->len + n > data->capacity) {
-		if(TCG_IncreaseCapacity(data, data->len + n)) {
-			return 0;
-		}
+	if(!TCG_IncreaseCapacity(data, data->len + n)) {
+		return 0;
 	}
-	
+
 	TCG_QuickSortDepth(data);
 
 	return 1;
@@ -1519,11 +1589,11 @@ void TCG_RenderWireframe(TCG_Data *data) {
 	uint n = data->polygon_type;
 	uint indices[2];
 
-	if(!TCG_IncreaseCapacity(data, data->len + 1)) {
+	if(data->putPixel == TCG_NULL) {
 		return;
 	}
 
-	if(data->putPixel == TCG_NULL) {
+	if(!TCG_IncreaseCapacity(data, data->len + 1)) {
 		return;
 	}
 
@@ -1532,33 +1602,21 @@ void TCG_RenderWireframe(TCG_Data *data) {
 			indices[0] = i + j;
 			indices[1] = i + (j + 1) % n;
 
-			TCG_RasterizeAffineLine(data, indices);
+			TCG_RasterizeLine(data, indices, 1);
 		}
 	}
 }
 
 void TCG_RenderAffine(TCG_Data *data) {
-	if(!TCG_IncreaseCapacity(data, data->len + 3)) {
-		return;
-	}
+	int is_affine = 1;
+	
+	TCG_RenderFullData(data, is_affine);
+}
 
-	if(data->putPixel == TCG_NULL) {
-		return;
-	}
+void TCG_RenderPerspective(TCG_Data *data) {
+	int is_affine = 0;
 
-	switch(data->polygon_type) {
-		case TCG_LINE:
-			TCG_RasterizeAffineAllLines(data);
-			break;
-
-		case TCG_TRIANGLE:
-			TCG_RasterizeAffineAllTriangles(data);
-			break;
-
-		default:
-			TCG_RasterizeAffineAllPolygonsGeneric(data);
-			break;
-	}
+	TCG_RenderFullData(data, is_affine);
 }
 
 #endif /* TINYCG_IMPLEMENTATION */
