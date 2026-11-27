@@ -1145,6 +1145,9 @@ static void TCG_RasterizeTrianglePart(const TCG_Data *data, uint indices[3], uin
 				affine
 				);
 
+		TCG_FloorPointCoords(data, left_edge);
+		TCG_FloorPointCoords(data, right_edge);
+
 		dx = TCG_GetPoint(data, left_edge)[0] - TCG_GetPoint(data, right_edge)[0];
 		dx = ABSF(dx) + 1;
 
